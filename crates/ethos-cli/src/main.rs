@@ -37,20 +37,31 @@ use ethos_parser::{Parser as EthosParser, aggregator::Aggregator};
 use ethos_output::SvgGenerator;
 use ethos_core::TraceStep;
 use std::fs;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let cli = Cli::parse();
 
-    println!("{}", "Ethos: High-Fidelity Ethereum Tracing Suite".bold().cyan());
+    eprintln!("{}", "Ethos: High-Fidelity Ethereum Tracing Suite".bold().cyan());
 
     match &cli.command {
         Commands::Profile { tx, rpc } => {
-            println!("Profiling transaction: {} on {}", tx.green(), rpc.yellow());
+            eprintln!("Profiling transaction: {} on {}", tx.green(), rpc.yellow());
             
+            // Initialize elegant CLI spinner
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                    .template("{spinner:.cyan} {msg}")?,
+            );
+            spinner.enable_steady_tick(Duration::from_millis(100));
+
             let steps = if tx == "demo" {
-                println!("{} Generating offline demo trace...", "[1/2]".bold().dimmed());
+                spinner.set_message("Generating offline demo trace... [1/2]");
                 vec![
                     TraceStep { pc: 0, op: "PUSH1".into(), gas: 1000, gas_cost: 3, depth: 1, stack: None, memory: None },
                     TraceStep { pc: 1, op: "CALL".into(), gas: 997, gas_cost: 0, depth: 1, stack: None, memory: None },
@@ -62,11 +73,12 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 // 1. Fetch
                 let client = EthClient::new(rpc.to_string());
-                println!("{} Fetching trace from node...", "[1/4]".bold().dimmed());
+                spinner.set_message("Fetching trace from node... [1/4]");
                 
                 let trace_res = match client.get_transaction_trace(tx).await {
                     Ok(res) => res,
                     Err(e) => {
+                        spinner.finish_and_clear();
                         eprintln!("\n{} Could not fetch trace from node.", "Error:".bold().red());
                         eprintln!("{} Is your node running at {}?", "Hint:".cyan(), rpc.yellow().bold());
                         eprintln!("{} {}", "Details:".dimmed(), e);
@@ -75,27 +87,27 @@ async fn main() -> anyhow::Result<()> {
                 };
                 
                 // 2. Parse
-                println!("{} Normalizing {} structLogs...", "[2/4]".bold().dimmed(), trace_res.struct_logs.len());
+                spinner.set_message(format!("Normalizing {} structLogs... [2/4]", trace_res.struct_logs.len()));
                 EthosParser::normalize(trace_res.struct_logs)
             };
             
             // 3. Aggregate
             let aggregate_step_msg = if tx == "demo" { "[2/2]" } else { "[3/4]" };
-            println!("{} Aggregating execution metrics...", aggregate_step_msg.bold().dimmed());
+            spinner.set_message(format!("Aggregating execution metrics... {}", aggregate_step_msg));
             let stacks = Aggregator::build_collapsed_stacks(&steps);
             
             // 4. Output
             let output_step_msg = if tx == "demo" { "[Done]" } else { "[4/4]" };
-            println!("{} Generating visual flamegraph...", output_step_msg.bold().dimmed());
+            spinner.set_message(format!("Generating visual flamegraph... {}", output_step_msg));
             let svg = SvgGenerator::generate_flamegraph(&stacks)?;
             
             let out_file = format!("profile_{}.svg", tx);
             fs::write(&out_file, svg)?;
             
-            println!("{} Profile saved to {}", "Success!".bold().green(), out_file.bold());
+            spinner.finish_with_message(format!("{} Profile saved to {}", "Success!".bold().green(), out_file.bold()));
         }
         Commands::Diff { base, target } => {
-            println!("Comparing traces: {} and {}", base.green(), target.yellow());
+            eprintln!("Comparing traces: {} and {}", base.green(), target.yellow());
         }
     }
 
