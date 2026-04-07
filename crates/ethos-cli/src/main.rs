@@ -32,6 +32,11 @@ enum Commands {
     },
 }
 
+use ethos_rpc::EthClient;
+use ethos_parser::{Parser as EthosParser, aggregator::Aggregator};
+use ethos_output::SvgGenerator;
+use std::fs;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -42,6 +47,28 @@ async fn main() -> anyhow::Result<()> {
     match &cli.command {
         Commands::Profile { tx, rpc } => {
             println!("Profiling transaction: {} on {}", tx.green(), rpc.yellow());
+            
+            // 1. Fetch
+            let client = EthClient::new(rpc.to_string());
+            println!("{} Fetching trace from node...", "[1/4]".bold().dimmed());
+            let trace_res = client.get_transaction_trace(tx).await?;
+            
+            // 2. Parse
+            println!("{} Normalizing {} structLogs...", "[2/4]".bold().dimmed(), trace_res.struct_logs.len());
+            let steps = EthosParser::normalize(trace_res.struct_logs);
+            
+            // 3. Aggregate
+            println!("{} Aggregating execution metrics...", "[3/4]".bold().dimmed());
+            let stacks = Aggregator::build_collapsed_stacks(&steps);
+            
+            // 4. Output
+            println!("{} Generating visual flamegraph...", "[4/4]".bold().dimmed());
+            let svg = SvgGenerator::generate_flamegraph(&stacks)?;
+            
+            let out_file = format!("profile_{}.svg", tx);
+            fs::write(&out_file, svg)?;
+            
+            println!("{} Profile saved to {}", "Success!".bold().green(), out_file.bold());
         }
         Commands::Diff { base, target } => {
             println!("Comparing traces: {} and {}", base.green(), target.yellow());

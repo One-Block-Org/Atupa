@@ -8,6 +8,7 @@ repository = { workspace = true }
 
 [dependencies]
 ethos-core = { workspace = true }
+ethos-rpc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
