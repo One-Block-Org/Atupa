@@ -29,6 +29,10 @@ enum Commands {
         /// Optional output path for the SVG
         #[arg(short, long)]
         out: Option<String>,
+
+        /// Etherscan API Key for contract name resolution
+        #[arg(long, env = "ETHERSCAN_API_KEY")]
+        etherscan_key: Option<String>,
     },
     /// Compare two transaction traces
     Diff {
@@ -53,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     match cli.command {
-        Commands::Profile { tx, rpc, demo, out } => {
+        Commands::Profile { tx, rpc, demo, out, etherscan_key } => {
             if !demo && tx.is_empty() {
                 eprintln!(
                     "\n{} You must provide a transaction hash (--tx) or run with --demo.",
@@ -69,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                 rpc.yellow()
             );
 
-            commands::profile::execute_profile(&tx, &rpc, demo, out).await?;
+            commands::profile::execute_profile(&tx, &rpc, demo, out, etherscan_key).await?;
         }
         Commands::Diff { base, target } => {
             eprintln!("Comparing traces: {} and {}", base.green(), target.yellow());

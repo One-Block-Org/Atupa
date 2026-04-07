@@ -7,8 +7,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
 use colored::*;
 
+use ethos_rpc::etherscan::EtherscanResolver;
+
 /// Executes the profile command: fetching, parsing, aggregating and visualizing the trace.
-pub async fn execute_profile(tx: &str, rpc: &str, is_demo: bool, out: Option<String>) -> anyhow::Result<()> {
+pub async fn execute_profile(tx: &str, rpc: &str, is_demo: bool, out: Option<String>, etherscan_key: Option<String>) -> anyhow::Result<()> {
     let spinner = initialize_spinner()?;
 
     // 1. Fetch
@@ -18,8 +20,26 @@ pub async fn execute_profile(tx: &str, rpc: &str, is_demo: bool, out: Option<Str
         fetch_live_trace(tx, rpc, &spinner).await
     };
 
-    // 2. Aggregate & Output
-    render_and_save_trace(steps, tx, is_demo, out, &spinner)?;
+    // 2. Aggregate
+    let aggregate_step_msg = if is_demo { "[2/2]" } else { "[3/4]" };
+    spinner.set_message(format!("Aggregating execution metrics... {}", aggregate_step_msg));
+    let mut stacks = Aggregator::build_collapsed_stacks(&steps);
+
+    // 3. Etherscan Resolution
+    spinner.set_message("Resolving Contract Alignments against Etherscan...");
+    let resolver = EtherscanResolver::new(etherscan_key);
+    
+    // We iterate sequentially to respect free-tier rate limits implicitly
+    for stack in &mut stacks {
+        if let Some(addr) = &stack.target_address {
+             if let Some(name) = resolver.resolve_contract_name(addr).await {
+                 stack.target_address = Some(name);
+             }
+        }
+    }
+
+    // 4. Output
+    render_and_save_trace(stacks, tx, is_demo, out, &spinner)?;
 
     Ok(())
 }
@@ -82,17 +102,12 @@ async fn fetch_live_trace(tx: &str, rpc: &str, spinner: &ProgressBar) -> Vec<Tra
 }
 
 fn render_and_save_trace(
-    steps: Vec<TraceStep>,
+    stacks: Vec<ethos_core::CollapsedStack>,
     tx: &str,
     is_demo: bool,
     out: Option<String>,
     spinner: &ProgressBar,
 ) -> anyhow::Result<()> {
-    // 3. Aggregate
-    let aggregate_step_msg = if is_demo { "[2/2]" } else { "[3/4]" };
-    spinner.set_message(format!("Aggregating execution metrics... {}", aggregate_step_msg));
-    let stacks = Aggregator::build_collapsed_stacks(&steps);
-    
     // 4. Render
     let output_step_msg = if is_demo { "[Done]" } else { "[4/4]" };
     spinner.set_message(format!("Generating visual flamegraph... {}", output_step_msg));
