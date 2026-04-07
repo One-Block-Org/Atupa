@@ -67,3 +67,36 @@ impl Aggregator {
         stacks
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethos_core::TraceStep;
+
+    #[test]
+    fn test_aggregator_collapses_simple_call() {
+        let steps = vec![
+            // Root context opcodes (Depth 1)
+            TraceStep { pc: 0, op: "PUSH1".into(), gas: 100, gas_cost: 3, depth: 1, stack: None, memory: None },
+            TraceStep { pc: 1, op: "CALL".into(), gas: 90, gas_cost: 0, depth: 1, stack: None, memory: None },
+            // Sub-context opcodes (Depth 2)
+            TraceStep { pc: 0, op: "SSTORE".into(), gas: 50, gas_cost: 20, depth: 2, stack: None, memory: None },
+            TraceStep { pc: 1, op: "RETURN".into(), gas: 20, gas_cost: 0, depth: 2, stack: None, memory: None },
+            // Back to root (Depth 1)
+            TraceStep { pc: 2, op: "STOP".into(), gas: 15, gas_cost: 0, depth: 1, stack: None, memory: None },
+        ];
+
+        let stacks = Aggregator::build_collapsed_stacks(&steps);
+        
+        println!("Generated stacks: {:?}", stacks);
+        
+        assert!(!stacks.is_empty(), "Stacks should not be empty");
+        
+        let sstore_stack = stacks.iter().find(|s| s.stack == "CALL;CALL;SSTORE").expect("Should find SSTORE");
+        assert_eq!(sstore_stack.weight, 20);
+
+        let push1_stack = stacks.iter().find(|s| s.stack == "CALL;PUSH1").expect("Should find PUSH1");
+        assert_eq!(push1_stack.weight, 3);
+    }
+}
+
