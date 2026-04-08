@@ -1,5 +1,5 @@
 use askama::Template;
-use ethos_core::CollapsedStack;
+use atupa_core::CollapsedStack;
 
 #[derive(Template)]
 #[template(path = "flamegraph.svg")]
@@ -19,7 +19,7 @@ struct StackEntry {
 pub struct SvgGenerator;
 
 impl SvgGenerator {
-    /// Generates a valid SVG visualization string matching Ethos Aesthetic using Askama.
+    /// Generates a valid SVG visualization string matching Atupa Aesthetic using Askama.
     pub fn generate_flamegraph(stacks: &[CollapsedStack]) -> anyhow::Result<String> {
         let total_weight: u64 = stacks.iter().map(|s| s.weight).sum();
         if total_weight == 0 {

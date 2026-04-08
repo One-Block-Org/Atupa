@@ -1,7 +1,7 @@
-use ethos_core::TraceStep;
-use ethos_parser::aggregator::Aggregator;
+use atupa_core::TraceStep;
+use atupa_parser::aggregator::Aggregator;
 
-/// An example showing how to use the Ethos Aggregator library to collapse EVM traces.
+/// An example showing how to use the Atupa Aggregator library to collapse EVM traces.
 fn main() {
     // 1. Create mock trace steps (in a real app, these come from ethos-rpc)
     let steps = vec![

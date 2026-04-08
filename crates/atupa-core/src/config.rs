@@ -2,13 +2,13 @@ use figment::{Figment, providers::{Format, Toml, Env, Serialized}};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EthosConfig {
+pub struct AtupaConfig {
     pub rpc_url: String,
     pub etherscan_key: Option<String>,
     pub output_dir: String,
 }
 
-impl Default for EthosConfig {
+impl Default for AtupaConfig {
     fn default() -> Self {
         Self {
             rpc_url: "http://localhost:8545".to_string(),
@@ -18,13 +18,13 @@ impl Default for EthosConfig {
     }
 }
 
-impl EthosConfig {
+impl AtupaConfig {
     /// Load configuration by merging multiple sources.
-    /// Priority: CLI Flags > Env Vars > ethos.toml > Defaults
+    /// Priority: CLI Flags > Env Vars > atupa.toml > Defaults
     pub fn load() -> Self {
         Figment::from(Serialized::defaults(Self::default()))
-            .merge(Toml::file("ethos.toml"))
-            .merge(Env::prefixed("ETHOS_"))
+            .merge(Toml::file("atupa.toml"))
+            .merge(Env::prefixed("ATUPA_"))
             .extract()
             .unwrap_or_else(|_| Self::default())
     }

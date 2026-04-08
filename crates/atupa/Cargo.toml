@@ -1,5 +1,5 @@
 [package]
-name = "ethos-output"
+name = "atupa"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -13,10 +13,22 @@ keywords = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-ethos-core = { workspace = true }
+atupa-core = { workspace = true }
+atupa-rpc = { workspace = true }
+atupa-parser = { workspace = true }
+atupa-adapters = { workspace = true }
+atupa-output = { workspace = true }
+
+clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
 anyhow = { workspace = true }
-askama = { workspace = true }
 log = { workspace = true }
-# SVG generation logic will be here
+env_logger = { workspace = true }
+indicatif = { workspace = true }
+colored = { workspace = true }
+
+[[bin]]
+name = "atupa"
+path = "src/main.rs"

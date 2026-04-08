@@ -1,5 +1,5 @@
 [package]
-name = "ethos-cli"
+name = "atupa-rpc"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -13,22 +13,11 @@ keywords = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-ethos-core = { workspace = true }
-ethos-rpc = { workspace = true }
-ethos-parser = { workspace = true }
-ethos-adapters = { workspace = true }
-ethos-output = { workspace = true }
-
-clap = { workspace = true }
+atupa-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+reqwest = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 log = { workspace = true }
-env_logger = { workspace = true }
-indicatif = { workspace = true }
-colored = { workspace = true }
-
-[[bin]]
-name = "ethos"
-path = "src/main.rs"

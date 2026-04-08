@@ -1,5 +1,5 @@
 [package]
-name = "ethos-parser"
+name = "atupa-core"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -13,9 +13,10 @@ keywords = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-ethos-core = { workspace = true }
-ethos-rpc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-log = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+figment = { workspace = true }
+toml = { workspace = true }

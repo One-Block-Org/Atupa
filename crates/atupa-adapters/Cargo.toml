@@ -1,5 +1,5 @@
 [package]
-name = "ethos-rpc"
+name = "atupa-adapters"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -13,11 +13,8 @@ keywords = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-ethos-core = { workspace = true }
+atupa-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
-reqwest = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 log = { workspace = true }

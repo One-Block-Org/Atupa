@@ -1,25 +1,25 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ethos-cli",
-    "crates/ethos-rpc",
-    "crates/ethos-parser",
-    "crates/ethos-core",
-    "crates/ethos-adapters",
-    "crates/ethos-output",
+    "crates/atupa",
+    "crates/atupa-rpc",
+    "crates/atupa-parser",
+    "crates/atupa-core",
+    "crates/atupa-adapters",
+    "crates/atupa-output",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["Dean <ethos@eth-trace.io>"]
-description = "High-Fidelity Ethereum Tracing & Visual Profiling Suite"
+description = "Atupa: High-Fidelity Ethereum Tracing & Visual Profiling Suite"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/One-Block-Org/Ethos"
-homepage = "https://ethos.eth-trace.io"
-documentation = "https://docs.rs/ethos-core"
-keywords = ["ethereum", "tracing", "evm", "profiler", "flamegraph"]
+repository = "https://github.com/One-Block-Org/Atupa"
+homepage = "https://atupa.eth-trace.io"
+documentation = "https://docs.rs/atupa-core"
+keywords = ["atupa", "ethereum", "tracing", "evm", "profiler", "flamegraph"]
 categories = ["development-tools", "visualization", "cryptography::cryptocurrencies"]
 
 [workspace.dependencies]
@@ -46,9 +46,9 @@ figment = { version = "0.10.19", features = ["toml", "env"] }
 toml = "1.1.2"
 
 # Internal Workspace
-ethos-cli = { path = "crates/ethos-cli" }
-ethos-rpc = { path = "crates/ethos-rpc" }
-ethos-parser = { path = "crates/ethos-parser" }
-ethos-core = { path = "crates/ethos-core" }
-ethos-adapters = { path = "crates/ethos-adapters" }
-ethos-output = { path = "crates/ethos-output" }
+atupa = { path = "crates/atupa" }
+atupa-rpc = { path = "crates/atupa-rpc" }
+atupa-parser = { path = "crates/atupa-parser" }
+atupa-core = { path = "crates/atupa-core" }
+atupa-adapters = { path = "crates/atupa-adapters" }
+atupa-output = { path = "crates/atupa-output" }

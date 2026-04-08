@@ -1,7 +1,7 @@
 pub mod aggregator;
 
-use ethos_core::TraceStep;
-use ethos_rpc::RawStructLog;
+use atupa_core::TraceStep;
+use atupa_rpc::RawStructLog;
 
 pub struct Parser;
 

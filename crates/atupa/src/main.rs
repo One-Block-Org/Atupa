@@ -2,7 +2,7 @@ mod commands;
 
 use clap::{Parser, Subcommand};
 use colored::*;
-use ethos_core::config::EthosConfig;
+use atupa_core::config::AtupaConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,11 +51,11 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let cli = Cli::parse();
-    let config = EthosConfig::load();
+    let config = AtupaConfig::load();
 
     eprintln!(
         "{}",
-        "Ethos: High-Fidelity Ethereum Tracing Suite".bold().cyan()
+        "Atupa: High-Fidelity Ethereum Tracing Suite".bold().cyan()
     );
 
     match cli.command {

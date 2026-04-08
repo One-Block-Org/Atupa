@@ -1,4 +1,4 @@
-use ethos_core::{CollapsedStack, TraceStep};
+use atupa_core::{CollapsedStack, TraceStep};
 use std::collections::HashMap;
 use log::debug;
 
@@ -96,7 +96,7 @@ impl Aggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethos_core::TraceStep;
+    use atupa_core::TraceStep;
 
     #[test]
     fn test_aggregator_collapses_simple_call() {

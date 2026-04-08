@@ -1,13 +1,13 @@
-use ethos_rpc::EthClient;
-use ethos_parser::{Parser as EthosParser, aggregator::Aggregator};
-use ethos_output::SvgGenerator;
-use ethos_core::TraceStep;
+use atupa_rpc::EthClient;
+use atupa_parser::{Parser as AtupaParser, aggregator::Aggregator};
+use atupa_output::SvgGenerator;
+use atupa_core::TraceStep;
 use std::fs;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
 use colored::*;
 
-use ethos_rpc::etherscan::EtherscanResolver;
+use atupa_rpc::etherscan::EtherscanResolver;
 
 /// Executes the profile command: fetching, parsing, aggregating and visualizing the trace.
 pub async fn execute_profile(tx: &str, rpc: &str, is_demo: bool, out: Option<String>, etherscan_key: Option<String>) -> anyhow::Result<()> {
@@ -98,11 +98,11 @@ async fn fetch_live_trace(tx: &str, rpc: &str, spinner: &ProgressBar) -> Vec<Tra
     };
     
     spinner.set_message(format!("Normalizing {} structLogs... [2/4]", trace_res.struct_logs.len()));
-    EthosParser::normalize(trace_res.struct_logs)
+    AtupaParser::normalize(trace_res.struct_logs)
 }
 
 fn render_and_save_trace(
-    stacks: Vec<ethos_core::CollapsedStack>,
+    stacks: Vec<atupa_core::CollapsedStack>,
     tx: &str,
     is_demo: bool,
     out: Option<String>,

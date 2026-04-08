@@ -144,6 +144,88 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "atupa"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atupa-adapters",
+ "atupa-core",
+ "atupa-output",
+ "atupa-parser",
+ "atupa-rpc",
+ "clap",
+ "colored",
+ "env_logger",
+ "indicatif",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "atupa-adapters"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atupa-core",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "atupa-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "figment",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
+name = "atupa-output"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askama",
+ "atupa-core",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "atupa-parser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atupa-core",
+ "atupa-rpc",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "atupa-rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atupa-core",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,88 +517,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ethos-adapters"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ethos-core",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ethos-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "colored",
- "env_logger",
- "ethos-adapters",
- "ethos-core",
- "ethos-output",
- "ethos-parser",
- "ethos-rpc",
- "indicatif",
- "log",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "ethos-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "figment",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml 1.1.2+spec-1.1.0",
-]
-
-[[package]]
-name = "ethos-output"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "askama",
- "ethos-core",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ethos-parser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ethos-core",
- "ethos-rpc",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ethos-rpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ethos-core",
- "log",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]

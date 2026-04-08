@@ -1,11 +1,11 @@
-# Contributing to Ethos
+# Contributing to Atupa
 
-We are thrilled that you want to contribute to Ethos! Whether you are fixing a bug, improving the visualization, or adding a new protocol adapter, your help is appreciated.
+We are thrilled that you want to contribute to Atupa! Whether you are fixing a bug, improving the visualization, or adding a new protocol adapter, your help is appreciated.
 
 ## Development Workflow
 
 1.  **Fork the repo**: Create your own copy of the repository.
-2.  **Clone it**: `git clone git@github.com:One-Block-Org/Ethos.git`
+2.  **Clone it**: `git clone git@github.com:One-Block-Org/Atupa.git`
 3.  **Create a branch**: `git checkout -b feature/cool-new-thing`
 4.  **Make changes**: Implement your logic.
 5.  **Run tests**: `cargo test --workspace`
@@ -15,11 +15,11 @@ We are thrilled that you want to contribute to Ethos! Whether you are fixing a b
 ## Code Standards
 
 -   **Documentation**: Please document all public structs and functions using standard `///` doc comments.
--   **Tests**: All new features must include unit tests. Use `ethos-parser`'s existing tests as a template for trace-aggregation logic.
+-   **Tests**: All new features must include unit tests. Use `atupa-parser`'s existing tests as a template for trace-aggregation logic.
 -   **Structure**: Keep the library and CLI logic separate.
-    -   `ethos-core`: Shared types.
-    -   `ethos-parser`: Pure trace transformation logic.
-    -   `ethos-cli`: User-facing binary.
+    -   `atupa-core`: Shared types.
+    -   `atupa-parser`: Pure trace transformation logic.
+    -   `atupa-cli`: User-facing binary.
 
 ## License
 
