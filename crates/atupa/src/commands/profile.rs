@@ -10,6 +10,7 @@ use std::time::Duration;
 use atupa_rpc::etherscan::EtherscanResolver;
 
 /// Executes the profile command: fetching, parsing, aggregating and visualizing the trace.
+#[allow(clippy::collapsible_if)]
 pub async fn execute_profile(
     tx: &str,
     rpc: &str,

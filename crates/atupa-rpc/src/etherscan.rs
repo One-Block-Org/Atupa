@@ -45,6 +45,7 @@ impl EtherscanResolver {
     }
 
     /// Resolves an address to its verified Contract Name via Etherscan.
+    #[allow(clippy::collapsible_if)]
     pub async fn resolve_contract_name(&self, address: &str) -> Option<String> {
         if address.len() < 40 {
             return None;
@@ -73,13 +74,14 @@ impl EtherscanResolver {
 
         if let Ok(resp) = self.client.get(url).send().await {
             if let Ok(api_res) = resp.json::<EtherscanResponse>().await {
-                if api_res.status == "1" && !api_res.result.is_empty() {
-                    let name = api_res.result[0].contract_name.clone();
-                    if !name.is_empty() {
+                match (api_res.status.as_str(), api_res.result.first()) {
+                    ("1", Some(item)) if !item.contract_name.is_empty() => {
+                        let name = item.contract_name.clone();
                         let mut cache_lock = self.cache.lock().await;
                         cache_lock.insert(address.to_string(), name.clone());
                         return Some(name);
                     }
+                    _ => {}
                 }
             }
         }

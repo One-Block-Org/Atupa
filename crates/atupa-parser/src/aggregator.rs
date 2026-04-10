@@ -12,17 +12,27 @@ impl Aggregator {
     /// 2. Track call stack depth
     /// 3. Build stack strings for each gas-consuming operation
     /// 4. Aggregate by unique stack (sum gas weights)
+    ///
+    /// Processes a stream of `TraceStep` and aggregates them into collapsed call-stacks for visualization.
+    #[allow(clippy::collapsible_if)]
     pub fn build_collapsed_stacks(steps: &[TraceStep]) -> Vec<CollapsedStack> {
         debug!(
             "Building collapsed stacks from {} execution steps",
             steps.len()
         );
 
+        struct AggregatedData {
+            total_gas: u64,
+            _last_pc: u64,
+            target_address: Option<String>,
+            resolved_label: Option<String>,
+            reverted: bool,
+        }
+
         let registry = atupa_adapters::AdapterRegistry::new();
 
-        // Map to aggregate stacks: stack_string -> (total_gas, last_pc, target_address, resolved_label, reverted)
-        let mut stack_map: HashMap<String, (u64, u64, Option<String>, Option<String>, bool)> =
-            HashMap::new();
+        // Map to aggregate stacks: stack_string -> AggregatedData
+        let mut stack_map: HashMap<String, AggregatedData> = HashMap::new();
 
         // Current call stack
         let mut call_stack: Vec<String> = Vec::new();
@@ -133,34 +143,36 @@ impl Aggregator {
             };
 
             // Accumulate gas cost and flags
-            let entry = stack_map
-                .entry(stack_str)
-                .or_insert((0, 0, None, None, false));
-            entry.0 += step.gas_cost;
-            entry.1 = step.pc;
+            let entry = stack_map.entry(stack_str).or_insert(AggregatedData {
+                total_gas: 0,
+                _last_pc: 0,
+                target_address: None,
+                resolved_label: None,
+                reverted: false,
+            });
+            entry.total_gas += step.gas_cost;
+            entry._last_pc = step.pc;
             if target_address.is_some() {
-                entry.2 = target_address;
+                entry.target_address = target_address;
             }
             if resolved_label.is_some() {
-                entry.3 = resolved_label;
+                entry.resolved_label = resolved_label;
             }
             if step.reverted {
-                entry.4 = true;
+                entry.reverted = true;
             }
         }
 
         let mut stacks: Vec<CollapsedStack> = stack_map
             .into_iter()
-            .map(
-                |(stack, (weight, pc, target_address, resolved_label, reverted))| CollapsedStack {
-                    stack,
-                    weight,
-                    last_pc: Some(pc),
-                    target_address,
-                    resolved_label,
-                    reverted,
-                },
-            )
+            .map(|(stack, data)| CollapsedStack {
+                stack,
+                weight: data.total_gas,
+                last_pc: Some(data._last_pc),
+                target_address: data.target_address,
+                resolved_label: data.resolved_label,
+                reverted: data.reverted,
+            })
             .collect();
 
         stacks.sort_by(|a, b| b.weight.cmp(&a.weight));

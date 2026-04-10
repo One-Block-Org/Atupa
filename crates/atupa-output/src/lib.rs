@@ -40,7 +40,7 @@ impl SvgGenerator {
             }
 
             let box_class = if stack.reverted { "box-revert" } else { "box" };
-            let leaf_name = stack.stack.split(';').last().unwrap_or("unknown");
+            let leaf_name = stack.stack.split(';').next_back().unwrap_or("unknown");
 
             let mut label = format!("{} ({} gas)", leaf_name, stack.weight);
             if let Some(r_label) = &stack.resolved_label {
