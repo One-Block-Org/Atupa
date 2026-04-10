@@ -35,6 +35,32 @@ impl ProtocolAdapter for UniswapV4Adapter {
     }
 }
 
+/// Adapter specifically for identifying Aave v3 Pool operations
+pub struct AaveV3Adapter;
+
+impl ProtocolAdapter for AaveV3Adapter {
+    fn name(&self) -> &str {
+        "Aave v3"
+    }
+
+    fn resolve_label(&self, _address: Option<&str>, selector: Option<&str>) -> Option<String> {
+        let sel = selector?;
+        // Aave v3 Pool interface selectors
+        let label = match sel {
+            "0x617ba037" => "supply",
+            "0x69328dec" => "withdraw",
+            "0xa415bcad" => "borrow",
+            "0x573ade81" => "repay",
+            "0x00a718a9" => "liquidationCall",
+            "0xab9c4b5d" => "flashLoan",
+            "0x42b0b77c" => "flashLoanSimple",
+            _ => return None,
+        };
+        
+        Some(format!("Aave: {}", label))
+    }
+}
+
 /// The registry holding all known protocol adapters.
 pub struct AdapterRegistry {
     adapters: Vec<Box<dyn ProtocolAdapter>>,
@@ -45,6 +71,7 @@ impl AdapterRegistry {
     pub fn new() -> Self {
         let mut registry = Self { adapters: Vec::new() };
         registry.register(Box::new(UniswapV4Adapter));
+        registry.register(Box::new(AaveV3Adapter));
         registry
     }
 

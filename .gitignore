@@ -36,4 +36,4 @@ profile_*.svg
 *.out
 *.log
 
-.idea
+.ideanode_modules/

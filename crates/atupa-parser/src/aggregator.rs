@@ -243,4 +243,33 @@ mod tests {
         // Ensure that the specific Uniswap v4 Hook was decoded
         assert_eq!(call_stack.resolved_label.as_deref(), Some("Uniswapv4: beforeInitialize"));
     }
+
+    #[test]
+    fn test_aggregator_memory_selector_aave() {
+        let stack = vec![
+            "0x0".to_string(), // retLength
+            "0x0".to_string(), // retOffset
+            "0x4".to_string(), // argsLength
+            "0x0".to_string(), // argsOffset (byte 0)
+            "0x0".to_string(), // value
+            "0x0000000000000000000000002222222222222222222222222222222222222222".to_string(), // target address
+            "0x1000".to_string(), // gas
+        ];
+
+        // Memory array (32-byte chunks as 64-char hex strings)
+        // We set argsOffset = 0, so it looks in mem[0].
+        // "flashLoan" selector is 0xab9c4b5d. We'll pad the rest with zeroes.
+        let memory = vec![
+            "ab9c4b5d00000000000000000000000000000000000000000000000000000000".to_string(), // word 0
+        ];
+
+        let steps = vec![
+            TraceStep { pc: 0, op: "CALL".into(), gas: 1000, gas_cost: 80, depth: 1, stack: Some(stack), memory: Some(memory), error: None, reverted: false },
+        ];
+
+        let stacks = Aggregator::build_collapsed_stacks(&steps);
+        let call_stack = stacks.iter().find(|s| s.stack == "CALL;CALL").expect("Should find CALL");
+        
+        assert_eq!(call_stack.resolved_label.as_deref(), Some("Aave: flashLoan"));
+    }
 }
