@@ -23,7 +23,7 @@ impl SvgGenerator {
     pub fn generate_flamegraph(stacks: &[CollapsedStack]) -> anyhow::Result<String> {
         let total_weight: u64 = stacks.iter().map(|s| s.weight).sum();
         if total_weight == 0 {
-             return Ok("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 50\"><text x=\"10\" y=\"30\" fill=\"white\">No execution data found.</text></svg>".to_string());
+            return Ok("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 50\"><text x=\"10\" y=\"30\" fill=\"white\">No execution data found.</text></svg>".to_string());
         }
 
         let max_width = 980.0;
@@ -41,7 +41,7 @@ impl SvgGenerator {
 
             let box_class = if stack.reverted { "box-revert" } else { "box" };
             let leaf_name = stack.stack.split(';').last().unwrap_or("unknown");
-            
+
             let mut label = format!("{} ({} gas)", leaf_name, stack.weight);
             if let Some(r_label) = &stack.resolved_label {
                 label = format!("{} ({} gas)", r_label, stack.weight);

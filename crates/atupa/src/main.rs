@@ -1,8 +1,8 @@
 mod commands;
 
+use atupa_core::config::AtupaConfig;
 use clap::{Parser, Subcommand};
 use colored::*;
-use atupa_core::config::AtupaConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -59,8 +59,18 @@ async fn main() -> anyhow::Result<()> {
     );
 
     match cli.command {
-        Commands::Profile { tx, rpc, demo, out, etherscan_key } => {
-            let effective_rpc = if rpc != "http://localhost:8545" { rpc } else { config.rpc_url };
+        Commands::Profile {
+            tx,
+            rpc,
+            demo,
+            out,
+            etherscan_key,
+        } => {
+            let effective_rpc = if rpc != "http://localhost:8545" {
+                rpc
+            } else {
+                config.rpc_url
+            };
             let effective_key = etherscan_key.or(config.etherscan_key);
 
             if !demo && tx.is_empty() {
@@ -78,7 +88,8 @@ async fn main() -> anyhow::Result<()> {
                 effective_rpc.yellow()
             );
 
-            commands::profile::execute_profile(&tx, &effective_rpc, demo, out, effective_key).await?;
+            commands::profile::execute_profile(&tx, &effective_rpc, demo, out, effective_key)
+                .await?;
         }
         Commands::Diff { base, target } => {
             eprintln!("Comparing traces: {} and {}", base.green(), target.yellow());

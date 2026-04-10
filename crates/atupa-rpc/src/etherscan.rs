@@ -2,8 +2,8 @@ use reqwest::{Client, Url};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 #[derive(Deserialize, Debug)]
 struct EtherscanResponse {
@@ -43,11 +43,13 @@ impl EtherscanResolver {
             api_key,
         }
     }
-    
+
     /// Resolves an address to its verified Contract Name via Etherscan.
     pub async fn resolve_contract_name(&self, address: &str) -> Option<String> {
-        if address.len() < 40 { return None; }
-        
+        if address.len() < 40 {
+            return None;
+        }
+
         // Fast local hit
         {
             let cache_lock = self.cache.lock().await;
@@ -55,15 +57,20 @@ impl EtherscanResolver {
                 return Some(name.clone());
             }
         }
-        
+
         // Network fetch (Etherscan API V2 requires chainid)
-        let mut url_str = format!("https://api.etherscan.io/v2/api?chainid=1&module=contract&action=getsourcecode&address={}", address);
+        let mut url_str = format!(
+            "https://api.etherscan.io/v2/api?chainid=1&module=contract&action=getsourcecode&address={}",
+            address
+        );
         if let Some(key) = &self.api_key {
             url_str.push_str(&format!("&apikey={}", key));
         }
-        
-        let Ok(url) = Url::parse(&url_str) else { return None; };
-        
+
+        let Ok(url) = Url::parse(&url_str) else {
+            return None;
+        };
+
         if let Ok(resp) = self.client.get(url).send().await {
             if let Ok(api_res) = resp.json::<EtherscanResponse>().await {
                 if api_res.status == "1" && !api_res.result.is_empty() {
@@ -76,7 +83,7 @@ impl EtherscanResolver {
                 }
             }
         }
-        
+
         None
     }
 }

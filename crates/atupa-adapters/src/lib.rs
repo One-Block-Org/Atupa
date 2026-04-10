@@ -1,7 +1,7 @@
 pub trait ProtocolAdapter {
     /// The name of the protocol (e.g., "Uniswap v4").
     fn name(&self) -> &str;
-    
+
     /// Resolves a combination of target address and function selector into a human-readable label.
     fn resolve_label(&self, address: Option<&str>, selector: Option<&str>) -> Option<String>;
 }
@@ -30,7 +30,7 @@ impl ProtocolAdapter for UniswapV4Adapter {
             "0x0df2d576" => "afterDonate",
             _ => return None,
         };
-        
+
         Some(format!("Uniswapv4: {}", label))
     }
 }
@@ -56,7 +56,7 @@ impl ProtocolAdapter for AaveV3Adapter {
             "0x42b0b77c" => "flashLoanSimple",
             _ => return None,
         };
-        
+
         Some(format!("Aave: {}", label))
     }
 }
@@ -69,7 +69,9 @@ pub struct AdapterRegistry {
 impl AdapterRegistry {
     /// Initialize a new registry pre-loaded with all supported adapters.
     pub fn new() -> Self {
-        let mut registry = Self { adapters: Vec::new() };
+        let mut registry = Self {
+            adapters: Vec::new(),
+        };
         registry.register(Box::new(UniswapV4Adapter));
         registry.register(Box::new(AaveV3Adapter));
         registry

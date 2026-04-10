@@ -52,14 +52,22 @@ fn main() {
     let stacks = Aggregator::build_collapsed_stacks(&steps);
 
     // 3. Print the results
-    println!("Collapsed {} execution steps into {} paths.", steps.len(), stacks.len());
+    println!(
+        "Collapsed {} execution steps into {} paths.",
+        steps.len(),
+        stacks.len()
+    );
 
     for stack in stacks {
-        let status = if stack.reverted { "[REVERTED]" } else { "[SUCCESS]" };
+        let status = if stack.reverted {
+            "[REVERTED]"
+        } else {
+            "[SUCCESS]"
+        };
         println!("{} {} (weight: {} gas)", status, stack.stack, stack.weight);
-        
+
         if let Some(addr) = stack.target_address {
-             println!("   └─ Target: {}", addr);
+            println!("   └─ Target: {}", addr);
         }
     }
 }

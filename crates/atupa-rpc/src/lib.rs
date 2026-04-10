@@ -82,7 +82,8 @@ impl EthClient {
             "id": 1
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.rpc_url)
             .json(&payload)
             .send()
@@ -94,6 +95,8 @@ impl EthClient {
             return Err(RpcError::Node(err.message));
         }
 
-        rpc_res.result.ok_or_else(|| RpcError::Node("Missing result in RPC response".to_string()))
+        rpc_res
+            .result
+            .ok_or_else(|| RpcError::Node("Missing result in RPC response".to_string()))
     }
 }
