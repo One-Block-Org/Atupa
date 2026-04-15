@@ -114,6 +114,21 @@ enum Commands {
         #[arg(short, long, value_name = "TARGET_TX")]
         target: String,
     },
+
+    /// Launch Atupa Studio — the local web visualizer for trace reports
+    Studio {
+        /// Port for the dev server (default: 5173)
+        #[arg(short, long, default_value_t = 5173)]
+        port: u16,
+
+        /// Path to the studio directory (overrides auto-detection)
+        #[arg(long, env = "ATUPA_STUDIO_DIR", value_name = "DIR")]
+        dir: Option<String>,
+
+        /// Open the browser automatically after the server starts
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        open: bool,
+    },
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -177,6 +192,9 @@ async fn main() -> Result<()> {
         }
         Commands::Diff { base, target } => {
             cmd_diff(&cli.rpc, &base, &target).await?;
+        }
+        Commands::Studio { port, dir, open } => {
+            cmd_studio(port, dir, open).await?;
         }
     }
 
@@ -430,7 +448,117 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
     Ok(())
 }
 
+// ─── Studio Command ───────────────────────────────────────────────────────────
+
+/// Resolve the studio directory using a three-tier strategy:
+///   1. Explicit CLI flag / ATUPA_STUDIO_DIR env var
+///   2. `<CWD>/studio/`          (running from workspace root)
+///   3. `<binary dir>/studio/`   (local dev install)
+fn resolve_studio_path(explicit: Option<String>) -> Result<std::path::PathBuf> {
+    if let Some(p) = explicit {
+        let path = std::path::PathBuf::from(&p);
+        if path.is_dir() {
+            return Ok(path);
+        }
+        anyhow::bail!("ATUPA_STUDIO_DIR / --dir points to a non-existent directory: {p}");
+    }
+
+    // CWD/studio
+    let cwd_studio = std::env::current_dir()?.join("studio");
+    if cwd_studio.is_dir() {
+        return Ok(cwd_studio);
+    }
+
+    // binary-sibling/studio
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let sib = exe_dir.join("studio");
+            if sib.is_dir() {
+                return Ok(sib);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Could not locate the Atupa Studio directory.\n\
+         Run this command from the project root, or set ATUPA_STUDIO_DIR."
+    )
+}
+
+async fn cmd_studio(port: u16, dir: Option<String>, launch_browser: bool) -> Result<()> {
+    let studio_dir = resolve_studio_path(dir)?;
+    eprintln!(
+        "{} {}",
+        "→ Studio:".bold(),
+        studio_dir.display().to_string().cyan()
+    );
+
+    // ── Ensure node_modules is present ────────────────────────────────────────
+    if !studio_dir.join("node_modules").exists() {
+        eprintln!("{}", "→ node_modules not found — running npm install…".dimmed());
+        let status = std::process::Command::new("npm")
+            .arg("install")
+            .current_dir(&studio_dir)
+            .status()
+            .context("Failed to run `npm install` — is Node.js installed?")?;
+        if !status.success() {
+            anyhow::bail!("`npm install` failed. Check the output above.");
+        }
+    }
+
+    // ── Spawn the Vite dev server ──────────────────────────────────────────────
+    let url = format!("http://localhost:{port}/");
+    eprintln!("{} {}\n", "→ Starting dev server at".bold(), url.cyan().bold());
+
+    let mut child = std::process::Command::new("npm")
+        .args(["run", "dev", "--", "--port", &port.to_string(), "--host"])
+        .current_dir(&studio_dir)
+        .spawn()
+        .context("Failed to spawn `npm run dev`")?;
+
+    // ── Poll until the port opens (max 15 s) ──────────────────────────────────
+    let pb = spinner("Waiting for Studio to start…");
+    let addr = format!("127.0.0.1:{port}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+
+    loop {
+        if std::net::TcpStream::connect(&addr).is_ok() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            anyhow::bail!("Studio did not start within 15 s on port {port}.");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    pb.finish_with_message(format!(
+        "{} Studio ready at {}",
+        "✔".green().bold(),
+        url.cyan().bold()
+    ));
+
+    // ── Open browser ──────────────────────────────────────────────────────────
+    if launch_browser {
+        if let Err(e) = open::that(&url) {
+            eprintln!("{} Could not open browser: {e}", "⚠".yellow());
+        }
+    }
+
+    eprintln!(
+        "\n{}\n{}\n{}",
+        "  Press Ctrl+C to stop the Studio server.".dimmed(),
+        format!("  Drop a report.json into {url} to visualize a trace.").dimmed(),
+        "  Generate one with:  atupa capture --tx 0x... --output json --file report.json".dimmed(),
+    );
+
+    // ── Keep running until the user presses Ctrl+C ────────────────────────────
+    let _ = child.wait();
+    Ok(())
+}
+
 // ─── Banner & Rendering ───────────────────────────────────────────────────────
+
 
 fn print_banner() {
     eprintln!(
