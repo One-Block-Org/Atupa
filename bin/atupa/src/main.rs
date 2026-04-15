@@ -39,8 +39,6 @@ use atupa_rpc::RawStructLog;
     long_about = "\
 Inspect, profile, and audit transactions across the full Arbitrum Nitro\n\
 dual-VM stack (EVM + Stylus WASM). Part of the One Block infrastructure suite.\n\
-\n\
-GRANT:  Arbitrum Foundation | Phase I ($50k)\n\
 SOURCE: https://github.com/One-Block-Org/Atupa",
     version
 )]
@@ -202,8 +200,8 @@ async fn cmd_profile(
     }
 
     let display = if demo { "demo" } else { tx };
-    println!("{} {}", "→ Profiling:".bold(), display.cyan());
-    println!("{} {}\n", "→ Endpoint: ".bold(), rpc.dimmed());
+    eprintln!("{} {}", "→ Profiling:".bold(), display.cyan());
+    eprintln!("{} {}\n", "→ Endpoint: ".bold(), rpc.dimmed());
 
     atupa::execute_profile(tx, rpc, demo, out, etherscan_key)
         .await
@@ -219,8 +217,8 @@ async fn cmd_capture(
     file: Option<String>,
 ) -> Result<()> {
     let tx = normalise_hash(tx);
-    println!("{} {}", "→ Transaction:".bold(), tx.cyan());
-    println!("{} {}\n", "→ Endpoint:   ".bold(), rpc.dimmed());
+    eprintln!("{} {}", "→ Transaction:".bold(), tx.cyan());
+    eprintln!("{} {}\n", "→ Endpoint:   ".bold(), rpc.dimmed());
 
     // Phase 1: fetch ──────────────────────────────────────────────────────────
     let pb = spinner("Fetching dual-VM traces from Arbitrum Nitro…");
@@ -247,13 +245,13 @@ async fn cmd_capture(
     };
     pb2.finish_with_message(format!("{} Report ready.", "✔".green().bold()));
 
-    println!();
+    eprintln!();
 
     // Phase 3: output ─────────────────────────────────────────────────────────
     if let Some(path) = file {
         std::fs::write(&path, &rendered)
             .with_context(|| format!("Failed to write report to '{path}'"))?;
-        println!(
+        eprintln!(
             "{} Report written to {}",
             "✔".green().bold(),
             path.cyan().bold()
@@ -274,13 +272,13 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
         Protocol::Lido => "Lido stETH",
     };
 
-    println!(
+    eprintln!(
         "{} {} audit for {}",
         "→".bold(),
         label.yellow().bold(),
         tx.cyan()
     );
-    println!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
 
     let pb = spinner(&format!("Fetching trace for {label} audit…"));
     let client = NitroClient::new(rpc.to_string());
@@ -314,7 +312,7 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
                 .context("Aave adapter failed")?;
 
             pb2.finish_with_message(format!("{} Aave v3 adapter complete.", "✔".green().bold()));
-            println!();
+            eprintln!();
             print_aave_report(&liq, &report);
         }
         Protocol::Lido => {
@@ -337,7 +335,7 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
                 "{} Lido stETH adapter complete.",
                 "✔".green().bold()
             ));
-            println!();
+            eprintln!();
             print_lido_report(&res, &report);
         }
     }
@@ -351,14 +349,14 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
     let base = normalise_hash(base);
     let target = normalise_hash(target);
 
-    println!(
+    eprintln!(
         "{} {} {} {}",
         "→ Base:  ".bold(),
         base.cyan(),
         "Target:".bold(),
         target.yellow()
     );
-    println!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
 
     let client = NitroClient::new(rpc.to_string());
 
@@ -370,7 +368,7 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
     .context("Failed to fetch one or both traces")?;
     pb.finish_with_message(format!("{} Both traces fetched.", "✔".green().bold()));
 
-    println!();
+    eprintln!();
 
     // Cost delta
     let base_cost = base_report.total_unified_cost;
@@ -435,21 +433,21 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
 // ─── Banner & Rendering ───────────────────────────────────────────────────────
 
 fn print_banner() {
-    println!(
+    eprintln!(
         "{}",
         "╔════════════════════════════════════════════╗".dimmed()
     );
-    println!(
+    eprintln!(
         "{} {} {}",
         "║".dimmed(),
         " 🏮  ATUPA  ·  Unified Execution Profiler  ".bold(),
         "║".dimmed()
     );
-    println!(
+    eprintln!(
         "{}",
         "╚════════════════════════════════════════════╝".dimmed()
     );
-    println!();
+    eprintln!();
 }
 
 fn render_capture_summary(report: &StitchedReport) -> String {
@@ -461,7 +459,7 @@ fn render_capture_summary(report: &StitchedReport) -> String {
 
     out += &format!(
         "  {:<34} {}\n",
-        "EVM Gas:".bold(),
+        "EVM Trace Gas (Total):".bold(),
         report.total_evm_gas.to_string().green()
     );
     out += &format!(
@@ -473,14 +471,6 @@ fn render_capture_summary(report: &StitchedReport) -> String {
         "  {:<34} {}\n",
         "  → Gas-equivalent (÷10,000):".dimmed(),
         format!("{:.2}", report.total_stylus_gas_equiv).yellow()
-    );
-    out += &format!("{div}\n");
-    out += &format!(
-        "  {:<34} {}\n",
-        "Unified Cost (gas):".bold(),
-        format!("{:.2}", report.total_unified_cost)
-            .bold()
-            .bright_white()
     );
     out += &format!("{div}\n");
 
@@ -522,15 +512,23 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     }
 
     // Top Stylus ink consumers
-    let mut stylus = report.stylus_steps();
-    stylus.sort_by(|a, b| b.cost_equiv.partial_cmp(&a.cost_equiv).unwrap());
+    let stylus = report.stylus_steps();
     if !stylus.is_empty() {
+        let mut grouped: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        for step in stylus.iter() {
+            *grouped.entry(step.label.clone()).or_insert(0.0) += step.cost_equiv;
+        }
+
+        let mut aggregated: Vec<(String, f64)> = grouped.into_iter().collect();
+        // Sort descending by cost
+        aggregated.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
         out += &format!("  {}\n", "🔥 Top Ink Consumers (Stylus HostIO):".bold());
-        for step in stylus.iter().take(5) {
+        for (label, cost) in aggregated.iter().take(5) {
             out += &format!(
                 "    {:<36} {:>8.2} gas-equiv\n",
-                step.label.yellow(),
-                step.cost_equiv
+                label.yellow(),
+                cost
             );
         }
         out += &format!("{div}\n");

@@ -21,15 +21,16 @@ Existing tools focus strictly on the WASM Native VM. Atupa focuses on the **Tran
 
 ## 🛠 Milestones (4 Months)
 
-### Milestone 1: The Nitro Unified Tracer ($15,000)
+### Milestone 1: The Nitro Unified Tracer ($15,000) - [✅ ALPHA DELIVERED]
 - Develop the `atupa-nitro` adapter for stitching EVM and WASM traces.
 - Implement the "Hybrid Flamegraph" engine.
-- Deliverable: Alpha CLI tool (`cargo-atupa`) for local testing.
+- Deliverable: Alpha CLI tool (`atupa`) available in `bin/atupa`.
 
-### Milestone 2: Institutional Protocol Adapters ($20,000)
+### Milestone 2: Institutional Protocol Adapters ($20,000) - [✅ IN PROGRESS]
 - Integrate deep decoding for Aave v3, GHO, and Lido on Arbitrum.
+- Functional Adapters: `atupa-aave` and `atupa-lido` are now operational in the workspace.
 - Implement "Liquidation-Efficiency" and "Oracle-Latency" tracking.
-- Deliverable: Advanced profiling reports for cross-chain liquidity.
+- Deliverable: Advanced profiling reports accessible via `atupa audit`.
 
 ### Milestone 3: The Atupa Studio & CI Suite ($15,000)
 - Launch the high-performance Web Viewer for interactive trace exploration.

@@ -19,7 +19,18 @@ We are thrilled that you want to contribute to Atupa! Whether you are fixing a b
 -   **Structure**: Keep the library and CLI logic separate.
     -   `atupa-core`: Shared types.
     -   `atupa-parser`: Pure trace transformation logic.
-    -   `atupa-cli`: User-facing binary.
+    -   `atupa-sdk`: Unified developer library.
+    -   `bin/atupa`: User-facing binary.
+    -   `crates/atupa-<name>`: Specialized protocol adapters.
+
+## 💉 Adding a Protocol Adapter
+
+Protocol adapters allow Atupa to understand the high-level business logic of a specific DeFi protocol. To add a new one:
+
+1.  **Create a crate**: Use `crates/atupa-lido` as a template.
+2.  **Implement `ProtocolAdapter`**: Define how to extract string labels and metrics from an EVM frame.
+3.  **Export via SDK**: Add your crate to `crates/atupa-sdk` to make it accessible to library users.
+4.  **CLI Integration**: Update `bin/atupa/src/main.rs` to include your adapter in the `audit` command.
 
 ## License
 

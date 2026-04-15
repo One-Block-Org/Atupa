@@ -1,12 +1,12 @@
-# Ethos Configuration File
+# Atupa Configuration File
 # -------------------------
-# priority: CLI flags > Env Vars > ethos.toml > Defaults
+# priority: CLI flags > Env Vars > atupa.toml > Defaults
 
 # The JSON-RPC endpoint to fetch traces from
 rpc_url = "http://localhost:8545"
 
 # Your Etherscan API Key for contract name resolution
-# Alternatively, set ETHERSCAN_API_KEY environment variable
+# Alternatively, set ATUPA_ETHERSCAN_KEY environment variable
 # etherscan_key = "YOUR_API_KEY_HERE"
 
 # Default output directory for generated SVGs

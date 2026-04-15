@@ -3,7 +3,7 @@ use atupa_parser::aggregator::Aggregator;
 
 /// An example showing how to use the Atupa Aggregator library to collapse EVM traces.
 fn main() {
-    // 1. Create mock trace steps (in a real app, these come from ethos-rpc)
+    // 1. Create mock trace steps (in a real app, these come from atupa-rpc)
     let steps = vec![
         TraceStep {
             pc: 0,
@@ -48,11 +48,14 @@ fn main() {
         },
     ];
 
-    // 2. Collapse the steps into weighted execution stacks
+    // 2. Initialize logger for the example
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // 3. Collapse the steps into weighted execution stacks
     let stacks = Aggregator::build_collapsed_stacks(&steps);
 
-    // 3. Print the results
-    println!(
+    // 4. Log the results
+    log::info!(
         "Collapsed {} execution steps into {} paths.",
         steps.len(),
         stacks.len()
@@ -64,10 +67,10 @@ fn main() {
         } else {
             "[SUCCESS]"
         };
-        println!("{} {} (weight: {} gas)", status, stack.stack, stack.weight);
+        log::info!("{} {} (weight: {} gas)", status, stack.stack, stack.weight);
 
         if let Some(addr) = stack.target_address {
-            println!("   └─ Target: {}", addr);
+            log::info!("   └─ Target: {}", addr);
         }
     }
 }

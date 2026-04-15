@@ -250,6 +250,7 @@ dependencies = [
  "atupa-adapters",
  "atupa-core",
  "atupa-rpc",
+ "env_logger",
  "log",
  "serde",
  "serde_json",

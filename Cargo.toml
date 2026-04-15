@@ -22,7 +22,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/One-Block-Org/Atupa"
 homepage = "https://atupa.eth-trace.io"
-documentation = "https://docs.rs/atupa-core"
+documentation = "https://docs.rs/atupa"
 keywords = ["ethereum", "tracing", "evm", "profiler", "flamegraph"]
 categories = ["development-tools", "visualization", "cryptography::cryptocurrencies"]
 
