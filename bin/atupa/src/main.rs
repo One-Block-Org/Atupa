@@ -11,11 +11,8 @@
 //! atupa diff     --base <HASH> --target <HASH> [--rpc <URL>]
 //! ```
 //!
-//! Can also be invoked as a `cargo` subcommand:
-//!
-//! ```text
-//! cargo atupa profile --tx <HASH>
-//! ```
+//! ## Standalone Usage
+//! Atupa is designed to be used as a standalone CLI tool.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -25,6 +22,7 @@ use std::time::Duration;
 
 use atupa_aave::AaveDeepTracer;
 use atupa_core::TraceStep;
+use atupa_core::config::AtupaConfig;
 use atupa_lido::LidoDeepTracer;
 use atupa_nitro::{NitroClient, StitchedReport, VmKind};
 use atupa_rpc::RawStructLog;
@@ -48,10 +46,9 @@ struct Cli {
         short,
         long,
         global = true,
-        env = "ATUPA_RPC_URL",
-        default_value = "http://localhost:8547"
+        value_name = "URL"
     )]
-    rpc: String,
+    rpc: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -74,7 +71,7 @@ enum Commands {
         out: Option<String>,
 
         /// Etherscan API key for contract name resolution
-        #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+        #[arg(long, value_name = "KEY")]
         etherscan_key: Option<String>,
     },
 
@@ -122,7 +119,7 @@ enum Commands {
         port: u16,
 
         /// Path to the studio directory (overrides auto-detection)
-        #[arg(long, env = "ATUPA_STUDIO_DIR", value_name = "DIR")]
+        #[arg(long, value_name = "DIR")]
         dir: Option<String>,
 
         /// Open the browser automatically after the server starts
@@ -153,18 +150,7 @@ enum Protocol {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Support `cargo atupa <cmd>` by stripping the extra "atupa" argv[1] that
-    // cargo inserts when it dispatches to a cargo-<name> subcommand binary.
-    let raw: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    let args = if raw.get(1).and_then(|s| s.to_str()) == Some("atupa") {
-        raw.into_iter()
-            .enumerate()
-            .filter(|(i, _)| *i != 1)
-            .map(|(_, a)| a)
-            .collect::<Vec<_>>()
-    } else {
-        raw
-    };
+    let args = std::env::args_os();
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
@@ -172,6 +158,11 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse_from(args);
+    let mut config = AtupaConfig::load();
+
+    if let Some(r) = cli.rpc {
+        config.rpc_url = r;
+    }
 
     print_banner();
 
@@ -182,19 +173,25 @@ async fn main() -> Result<()> {
             out,
             etherscan_key,
         } => {
-            cmd_profile(&cli.rpc, &tx, demo, out, etherscan_key).await?;
+            if let Some(key) = etherscan_key {
+                config.etherscan_key = Some(key);
+            }
+            cmd_profile(&config, &tx, demo, out).await?;
         }
         Commands::Capture { tx, output, file } => {
-            cmd_capture(&cli.rpc, &tx, output, file).await?;
+            cmd_capture(&config, &tx, output, file).await?;
         }
         Commands::Audit { tx, protocol } => {
-            cmd_audit(&cli.rpc, &tx, protocol).await?;
+            cmd_audit(&config, &tx, protocol).await?;
         }
         Commands::Diff { base, target } => {
-            cmd_diff(&cli.rpc, &base, &target).await?;
+            cmd_diff(&config, &base, &target).await?;
         }
         Commands::Studio { port, dir, open } => {
-            cmd_studio(port, dir, open).await?;
+            if let Some(d) = dir {
+                config.studio_dir = Some(std::path::PathBuf::from(d));
+            }
+            cmd_studio(&config, port, open).await?;
         }
     }
 
@@ -204,11 +201,10 @@ async fn main() -> Result<()> {
 // ─── Profile Command ──────────────────────────────────────────────────────────
 
 async fn cmd_profile(
-    rpc: &str,
+    config: &AtupaConfig,
     tx: &str,
     demo: bool,
     out: Option<String>,
-    etherscan_key: Option<String>,
 ) -> Result<()> {
     if !demo && tx.is_empty() {
         anyhow::bail!(
@@ -219,9 +215,9 @@ async fn cmd_profile(
 
     let display = if demo { "demo" } else { tx };
     eprintln!("{} {}", "→ Profiling:".bold(), display.cyan());
-    eprintln!("{} {}\n", "→ Endpoint: ".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint: ".bold(), config.rpc_url.dimmed());
 
-    let (out_path, network) = atupa::execute_profile(tx, rpc, demo, out, etherscan_key)
+    let (out_path, network) = atupa::execute_profile(tx, &config.rpc_url, demo, out, config.etherscan_key.clone())
         .await
         .context("Profile command failed")?;
 
@@ -245,18 +241,18 @@ async fn cmd_profile(
 // ─── Capture Command ──────────────────────────────────────────────────────────
 
 async fn cmd_capture(
-    rpc: &str,
+    config: &AtupaConfig,
     tx: &str,
     format: OutputFormat,
     file: Option<String>,
 ) -> Result<()> {
     let tx = normalise_hash(tx);
     eprintln!("{} {}", "→ Transaction:".bold(), tx.cyan());
-    eprintln!("{} {}\n", "→ Endpoint:   ".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:   ".bold(), config.rpc_url.dimmed());
 
     // Phase 1: fetch ──────────────────────────────────────────────────────────
     let pb = spinner("Detecting network and fetching execution trace…");
-    let client = NitroClient::new(rpc.to_string());
+    let client = NitroClient::new(config.rpc_url.clone());
  
     let report = client
         .trace_transaction(&tx)
@@ -305,7 +301,7 @@ async fn cmd_capture(
 
 // ─── Audit Command ────────────────────────────────────────────────────────────
 
-async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
+async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result<()> {
     let tx = normalise_hash(tx);
     let label = match protocol {
         Protocol::Aave => "Aave v3 + GHO",
@@ -318,10 +314,10 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
         label.yellow().bold(),
         tx.cyan()
     );
-    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), config.rpc_url.dimmed());
 
     let pb = spinner(&format!("Fetching trace for {label} audit…"));
-    let client = NitroClient::new(rpc.to_string());
+    let client = NitroClient::new(config.rpc_url.clone());
 
     let report = client
         .trace_transaction(&tx)
@@ -385,7 +381,7 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
 
 // ─── Diff Command ─────────────────────────────────────────────────────────────
 
-async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
+async fn cmd_diff(config: &AtupaConfig, base: &str, target: &str) -> Result<()> {
     let base = normalise_hash(base);
     let target = normalise_hash(target);
 
@@ -396,9 +392,9 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
         "Target:".bold(),
         target.yellow()
     );
-    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), config.rpc_url.dimmed());
 
-    let client = NitroClient::new(rpc.to_string());
+    let client = NitroClient::new(config.rpc_url.clone());
 
     let pb = spinner("Fetching both traces concurrently…");
     let (base_report, target_report) = tokio::try_join!(
@@ -473,16 +469,15 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
 // ─── Studio Command ───────────────────────────────────────────────────────────
 
 /// Resolve the studio directory using a three-tier strategy:
-///   1. Explicit CLI flag / ATUPA_STUDIO_DIR env var
+///   1. Explicit CLI flag / ATUPA_STUDIO_DIR config value
 ///   2. `<CWD>/studio/`          (running from workspace root)
 ///   3. `<binary dir>/studio/`   (local dev install)
-fn resolve_studio_path(explicit: Option<String>) -> Result<std::path::PathBuf> {
-    if let Some(p) = explicit {
-        let path = std::path::PathBuf::from(&p);
+fn resolve_studio_path(explicit: Option<&std::path::PathBuf>) -> Result<std::path::PathBuf> {
+    if let Some(path) = explicit {
         if path.is_dir() {
-            return Ok(path);
+            return Ok(path.clone());
         }
-        anyhow::bail!("ATUPA_STUDIO_DIR / --dir points to a non-existent directory: {p}");
+        anyhow::bail!("Configured studio directory points to a non-existent directory: {}", path.display());
     }
 
     // CWD/studio
@@ -507,8 +502,8 @@ fn resolve_studio_path(explicit: Option<String>) -> Result<std::path::PathBuf> {
     )
 }
 
-async fn cmd_studio(port: u16, dir: Option<String>, launch_browser: bool) -> Result<()> {
-    let studio_dir = resolve_studio_path(dir)?;
+async fn cmd_studio(config: &AtupaConfig, port: u16, launch_browser: bool) -> Result<()> {
+    let studio_dir = resolve_studio_path(config.studio_dir.as_ref())?;
     eprintln!(
         "{} {}",
         "→ Studio:".bold(),

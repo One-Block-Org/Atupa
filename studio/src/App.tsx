@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import './styles/design-system.css';
 import type { StitchedReport } from './types/trace';
 import {
@@ -9,16 +9,19 @@ import {
   evmSteps,
   stylusSteps,
 } from './types/trace';
+import { reportToTree } from './types/reportToTree';
 import { DragDropZone } from './components/DragDropZone';
 import { MetricCard } from './components/MetricCard';
 import { HostIoAggregator } from './components/HostIoAggregator';
 import { TraceInspector } from './components/TraceInspector';
+import { FlameGraph } from './components/FlameGraph';
 
-type View = 'overview' | 'trace' | 'hostio';
+type View = 'overview' | 'flame' | 'trace' | 'hostio';
 
 export default function App() {
   const [report, setReport] = useState<StitchedReport | null>(null);
   const [view, setView] = useState<View>('overview');
+  const [flameSearch, setFlameSearch] = useState('');
 
   const handleLoad = useCallback((r: StitchedReport) => {
     setReport(r);
@@ -28,9 +31,14 @@ export default function App() {
   const handleReset = useCallback(() => {
     setReport(null);
     setView('overview');
+    setFlameSearch('');
   }, []);
 
   const hostIOs = report ? aggregateHostIOs(report) : [];
+  const flameRoot = useMemo(
+    () => (report ? reportToTree(report) : null),
+    [report],
+  );
 
   return (
     <div className="app-shell">
@@ -76,9 +84,10 @@ export default function App() {
       <nav className="app-sidebar" aria-label="Main navigation">
         <div className="sidebar-section-label">Views</div>
 
-        {(['overview', 'trace', 'hostio'] as View[]).map((v) => {
+        {(['overview', 'flame', 'trace', 'hostio'] as View[]).map((v) => {
           const meta = {
             overview: { icon: '📊', label: 'Overview' },
+            flame:    { icon: '🔆', label: 'Visual Trace' },
             trace:    { icon: '🧩', label: 'Trace Inspector' },
             hostio:   { icon: '🔥', label: 'HostIO Hot Paths' },
           }[v];
@@ -171,6 +180,34 @@ export default function App() {
                   </div>
                 )}
               </>
+            )}
+
+            {view === 'flame' && flameRoot && (
+              <div className="glass-card">
+                <div className="section-header">
+                  <span className="section-title">🔆 Visual Trace</span>
+                  <div className="section-divider" />
+                  <input
+                    id="flame-search"
+                    type="search"
+                    placeholder="Search node…"
+                    value={flameSearch}
+                    onChange={(e) => setFlameSearch(e.target.value)}
+                    style={{
+                      padding: '4px 10px',
+                      background: 'var(--color-bg-raised)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 6,
+                      color: 'var(--color-text-primary)',
+                      fontSize: 11,
+                      fontFamily: 'var(--font-mono)',
+                      outline: 'none',
+                      width: 180,
+                    }}
+                  />
+                </div>
+                <FlameGraph root={flameRoot} search={flameSearch} />
+              </div>
             )}
 
             {view === 'hostio' && (

@@ -6,15 +6,10 @@ authors     = { workspace = true }
 license     = { workspace = true }
 description = "atupa — Unified EVM + Stylus Execution Profiler CLI"
 
-# Two binary targets so the tool works both as a standalone command
-# and as a `cargo atupa` subcommand.
-[[bin]]
-name = "atupa"
-path = "src/main.rs"
+# Standalone binary target
+# 
+# The binary is automatically inferred from src/main.rs as "atupa"
 
-[[bin]]
-name = "cargo-atupa"
-path = "src/main.rs"
 
 [dependencies]
 # Atupa SDK
