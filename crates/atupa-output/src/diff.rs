@@ -230,8 +230,8 @@ fn get_truncated_name(name: &str, w: f64) -> String {
 
 fn render_diff_legend(out: &mut String, y: usize) {
     let items = [
-        ("Regression (Target > Base)", "#ef4444"),
-        ("Improvement (Target < Base)", "#22c55e"),
+        ("Regression (Target &gt; Base)", "#ef4444"),
+        ("Improvement (Target &lt; Base)", "#22c55e"),
         ("No Change", "#475569"),
     ];
 
