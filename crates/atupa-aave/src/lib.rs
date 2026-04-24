@@ -29,6 +29,7 @@ const POOL_SELECTORS: &[(&str, &str)] = &[
     ("0x095ea7b3", "approve"),      // ERC-20
     ("0x1e9a6950", "setUserUseReserveAsCollateral"),
     ("0x02c205f0", "swapBorrowRateMode"),
+    ("0x1e9d0e2e", "claimRewards"),
 ];
 
 /// Known GHO Facilitators (Ethereum Mainnet).
@@ -100,6 +101,23 @@ impl ProtocolAdapter for AaveV3Adapter {
         // Fall through to GHO selectors
         for &(known_sel, label) in GHO_SELECTORS {
             if sel == known_sel {
+                return Some(format!("GHO::{label}"));
+            }
+        }
+        None
+    }
+}
+
+impl AaveV3Adapter {
+    /// Resolve a 4-byte selector string to a human-readable label (no instance needed).
+    pub fn resolve_selector_label(selector: &str) -> Option<String> {
+        for &(known_sel, label) in POOL_SELECTORS {
+            if selector == known_sel {
+                return Some(format!("AaveV3Pool::{label}"));
+            }
+        }
+        for &(known_sel, label) in GHO_SELECTORS {
+            if selector == known_sel {
                 return Some(format!("GHO::{label}"));
             }
         }

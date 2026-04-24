@@ -430,8 +430,14 @@ async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result
     );
     eprintln!("{} {}\n", "→ Endpoint:".bold(), config.rpc_url.dimmed());
 
-    let pb = spinner(&format!("Fetching trace for {label} audit…"));
+    let eth_client = EthClient::new(config.rpc_url.clone());
     let client = NitroClient::new(config.rpc_url.clone());
+
+    // Fetch the top-level calldata selector (non-fatal) — gives us the real function being called
+    let top_level_selector = eth_client.get_transaction_input(&tx).await
+        .and_then(|input| EthClient::selector_from_input(&input));
+
+    let pb = spinner(&format!("Fetching trace for {label} audit…"));
 
     let report = client
         .trace_transaction(&tx)
@@ -463,7 +469,7 @@ async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result
 
             pb2.finish_with_message(format!("{} Aave v3 adapter complete.", "✔".green().bold()));
             eprintln!();
-            print_aave_report(&liq, &report);
+            print_aave_report(&liq, &report, top_level_selector.as_deref());
         }
         Protocol::Lido => {
             let pb2 = spinner("Applying Lido stETH protocol adapter…");
@@ -486,12 +492,13 @@ async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result
                 "✔".green().bold()
             ));
             eprintln!();
-            print_lido_report(&res, &report);
+            print_lido_report(&res, &report, top_level_selector.as_deref());
         }
     }
 
     Ok(())
 }
+
 
 // ─── Diff Command ─────────────────────────────────────────────────────────────
 
@@ -849,10 +856,17 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     out
 }
 
-fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedReport) {
+fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedReport, top_selector: Option<&str>) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  AAVE v3 PROTOCOL AUDIT".bold().underline());
     println!("{div}");
+
+    // Show the actual top-level function called, resolved from calldata
+    if let Some(sel) = top_selector {
+        let fn_name = atupa_aave::AaveV3Adapter::resolve_selector_label(sel)
+            .unwrap_or_else(|| format!("unknown ({})", sel));
+        println!("  {:<34} {}", "Top-Level Call:".bold(), fn_name.yellow().bold());
+    }
 
     let rows: &[(&str, String)] = &[
         ("Total Gas (Aave frame):", aave.total_gas.to_string()),
@@ -902,10 +916,17 @@ fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedRepor
     println!("{div}");
 }
 
-fn print_lido_report(lido: &atupa_lido::LidoReport, nitro: &StitchedReport) {
+fn print_lido_report(lido: &atupa_lido::LidoReport, nitro: &StitchedReport, top_selector: Option<&str>) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  LIDO stETH PROTOCOL AUDIT".bold().underline());
     println!("{div}");
+
+    // Show the actual top-level function called, resolved from calldata
+    if let Some(sel) = top_selector {
+        let fn_name = atupa_lido::LidoAdapter::resolve_selector_label(sel)
+            .unwrap_or_else(|| format!("unknown fn ({})", sel));
+        println!("  {:<34} {}", "Top-Level Call:".bold(), fn_name.yellow().bold());
+    }
 
     let rows: &[(&str, String)] = &[
         ("Total Gas (Lido frame):", lido.total_gas.to_string()),

@@ -10,7 +10,7 @@ use atupa_core::TraceStep;
 
 /// Selectors for major Lido protocol operations.
 const LIDO_SELECTORS: &[(&str, &str)] = &[
-    ("0xa19046a6", "submit"),             // stETH.submit(address _referral)
+    ("0xa1903eab", "submit"),             // stETH.submit(address _referral) — CORRECT
     ("0xea598cb0", "requestWithdrawals"), // Legacy request withdrawals
     ("0x826a73d6", "requestWithdrawalsWithPermit"),
     ("0xe35ea9a5", "claimWithdrawals"),
@@ -39,6 +39,18 @@ impl ProtocolAdapter for LidoAdapter {
         let sel = selector?;
         for &(known_sel, label) in LIDO_SELECTORS {
             if sel == known_sel {
+                return Some(format!("stETH::{label}"));
+            }
+        }
+        None
+    }
+}
+
+impl LidoAdapter {
+    /// Resolve a 4-byte selector string to a human-readable label (no instance needed).
+    pub fn resolve_selector_label(selector: &str) -> Option<String> {
+        for &(known_sel, label) in LIDO_SELECTORS {
+            if selector == known_sel {
                 return Some(format!("stETH::{label}"));
             }
         }
@@ -96,59 +108,41 @@ impl LidoDeepTracer {
         let mut labeled_calls = Vec::new();
 
         for step in steps {
-            total_gas += step.gas_cost;
-            if step.depth > max_depth {
-                max_depth = step.depth;
-            }
+            total_gas = total_gas.saturating_add(step.gas_cost);
+            max_depth = max_depth.max(step.depth);
             if step.reverted {
                 reverted = true;
             }
 
-            // Identify external CALLs
-            if step.op == "CALL" || step.op == "DELEGATECALL" || step.op == "STATICCALL" {
-                // Peek stack to guess selector (naive inference based on typical abi dispatch)
-                // In actual deep tracing, we peek Memory using stack[argsOffset].
-                // For Atupa, we do proxy heuristics if full decoded input isn't available.
-                // However, our Atupa adapter relies on `TraceStep` metadata or stack inference.
-                // Let's iterate using stack-based selector heuristics or memory offsets.
+            // Robust detection: Look for CALL/STATICCALL and check the stack for selectors
+            if step.op == "CALL" || step.op == "STATICCALL" || step.op == "DELEGATECALL" {
+                if let Some(stack_vec) = step.stack.as_ref() {
+                    // The selector is typically the last item on the stack during a call dispatch
+                    if let Some(val_str) = stack_vec.last() {
+                        let trimmed = val_str.trim_start_matches("0x");
+                        if let Ok(val) = u64::from_str_radix(trimmed, 16) {
+                            let sel_str = format!("0x{:08x}", val as u32);
 
-                // Typical:
-                // stack[-3] or stack[-4] might be args pointer.
-                // We'll leave it as a high-level aggregation based on our adapter
-                // (which, in a real env, parses memory. Here we use mocked selectors).
-            }
+                            if let Some(label) = self.adapter.resolve_label(None, Some(&sel_str)) {
+                                if sel_str == "0xa1903eab" {
+                                    staking_gas = staking_gas.saturating_add(100_000); // Base staking cost estimate
+                                } else if sel_str == "0x39ba163b" {
+                                    shares_transfers += 1;
+                                } else if sel_str == "0xa9059cbb" {
+                                    token_transfers += 1;
+                                } else if sel_str == "0x8b6ca260" {
+                                    oracle_updates += 1;
+                                } else if sel_str == "0x0a19ea81" || sel_str == "0x1dfab2e1" {
+                                    wrapped_txs += 1;
+                                }
 
-            // To be precise with `atupa-core`, we look for PUSH4 as a proxy for selectors in the trace,
-            // or if the trace gives it to us. The current Atupa architecture (like Aave V3) often
-            // relies on memory slices at CALL times. Let's do a reliable proxy:
-
-            if step.op.starts_with("PUSH4")
-                && let Some(stack_vec) = step.stack.as_ref()
-                && let Some(val_str) = stack_vec.last()
-            {
-                // Parse hex selector from stack top (e.g. "0xa19046a6" or "a19046a6")
-                let trimmed = val_str.trim_start_matches("0x");
-                if let Ok(val) = u64::from_str_radix(trimmed.trim_start_matches('0'), 16) {
-                    let sel_str = format!("0x{:08x}", val as u32);
-
-                    if let Some(label) = self.adapter.resolve_label(None, Some(&sel_str)) {
-                        if sel_str == "0xa19046a6" {
-                            staking_gas += step.gas_cost.max(100_000);
-                        } else if sel_str == "0x39ba163b" {
-                            shares_transfers += 1;
-                        } else if sel_str == "0xa9059cbb" {
-                            token_transfers += 1;
-                        } else if sel_str == "0x8b6ca260" {
-                            oracle_updates += 1;
-                        } else if sel_str == "0x0a19ea81" || sel_str == "0x1dfab2e1" {
-                            wrapped_txs += 1;
+                                labeled_calls.push(LabeledCall {
+                                    depth: step.depth,
+                                    label,
+                                    gas_cost: step.gas_cost,
+                                });
+                            }
                         }
-
-                        labeled_calls.push(LabeledCall {
-                            depth: step.depth,
-                            label,
-                            gas_cost: 0,
-                        });
                     }
                 }
             }

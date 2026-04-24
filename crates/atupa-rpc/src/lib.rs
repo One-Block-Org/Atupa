@@ -155,5 +155,40 @@ impl EthClient {
         let gas_hex = rpc_res["result"]["gasUsed"].as_str()?;
         u64::from_str_radix(gas_hex.trim_start_matches("0x"), 16).ok()
     }
+
+    /// Fetch the raw `input` (calldata) of a transaction via eth_getTransactionByHash.
+    /// Returns the hex-encoded input string (e.g. "0xa9059cbb000...").
+    /// Returns None (non-fatal) if the call fails.
+    pub async fn get_transaction_input(&self, tx_hash: &str) -> Option<String> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionByHash",
+            "params": [tx_hash],
+            "id": 1
+        });
+
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .ok()?;
+
+        let rpc_res: serde_json::Value = response.json().await.ok()?;
+        rpc_res["result"]["input"]
+            .as_str()
+            .map(|s| s.to_string())
+    }
+
+    /// Extract the 4-byte function selector from raw calldata.
+    /// Returns a lowercase hex string like "0xa9059cbb", or None if calldata is too short.
+    pub fn selector_from_input(input: &str) -> Option<String> {
+        let stripped = input.trim_start_matches("0x");
+        if stripped.len() < 8 {
+            return None;
+        }
+        Some(format!("0x{}", &stripped[..8].to_lowercase()))
+    }
 }
 
