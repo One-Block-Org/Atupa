@@ -31,6 +31,7 @@ use atupa_parser::Parser as TraceParser;
 use atupa_parser::aggregator::Aggregator;
 use atupa_rpc::{EthClient, RawStructLog};
  
+mod init;
 mod studio;
 mod thresholds;
 
@@ -169,6 +170,16 @@ enum Commands {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         open: bool,
     },
+
+    /// Scaffold Atupa config, GitHub Actions workflow, and a profile script
+    ///
+    /// Run this once in a new repository to get started.
+    /// Detects Foundry, Hardhat, or Stylus projects automatically.
+    Init {
+        /// Overwrite existing files
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -268,6 +279,9 @@ async fn main() -> Result<()> {
             }
             config.studio_port = port;
             cmd_studio(&config, port, open, None).await?;
+        }
+        Commands::Init { force } => {
+            init::execute_init(init::InitArgs { force })?;
         }
     }
 
