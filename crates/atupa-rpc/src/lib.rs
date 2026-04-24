@@ -131,5 +131,29 @@ impl EthClient {
         u64::from_str_radix(result.trim_start_matches("0x"), 16)
             .map_err(|e| RpcError::Node(format!("Invalid chainId hex: {}", e)))
     }
+
+    /// Fetch the actual on-chain gasUsed from eth_getTransactionReceipt.
+    /// Returns None (non-fatal) if the receipt is unavailable or the call fails.
+    pub async fn get_gas_used(&self, tx_hash: &str) -> Option<u64> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+            "id": 1
+        });
+
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .ok()?;
+
+        let rpc_res: serde_json::Value = response.json().await.ok()?;
+
+        let gas_hex = rpc_res["result"]["gasUsed"].as_str()?;
+        u64::from_str_radix(gas_hex.trim_start_matches("0x"), 16).ok()
+    }
 }
 

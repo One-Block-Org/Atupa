@@ -179,6 +179,9 @@ pub struct StitchedReport {
     pub category_costs: HashMap<GasCategory, f64>,
     /// Address labels resolved via Etherscan (Address -> Contract Name).
     pub resolved_names: HashMap<String, String>,
+    /// Actual gas used on-chain from eth_getTransactionReceipt (includes intrinsic cost).
+    /// None if the receipt fetch was skipped or failed.
+    pub on_chain_gas_used: Option<u64>,
 }
 
 impl StitchedReport {
@@ -388,6 +391,7 @@ impl MixedTraceStitcher {
             total_unified_cost,
             category_costs,
             resolved_names: HashMap::new(),
+            on_chain_gas_used: None,
         }
     }
 }

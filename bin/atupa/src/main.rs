@@ -29,7 +29,7 @@ use atupa_nitro::{NitroClient, StitchedReport, VmKind};
 use atupa_output::SvgGenerator;
 use atupa_parser::Parser as TraceParser;
 use atupa_parser::aggregator::Aggregator;
-use atupa_rpc::RawStructLog;
+use atupa_rpc::{EthClient, RawStructLog};
  
  mod studio;
 
@@ -309,6 +309,10 @@ async fn cmd_capture(
             "".into()
         }
     ));
+
+    // Phase 1b: fetch receipt for on-chain gasUsed (non-fatal) ──────────────────
+    let eth_client = EthClient::new(config.rpc_url.clone());
+    report.on_chain_gas_used = eth_client.get_gas_used(&tx).await;
 
     // Phase 1.5: resolve contract names ─────────────────────────────────────────
     if let Some(key) = config.etherscan_key.clone() {
@@ -689,11 +693,32 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     );
     out += &format!("{div}\n");
 
-    out += &format!(
-        "  {:<34} {}\n",
-        "EVM Trace Gas (Total):".bold(),
-        report.total_evm_gas.to_string().green()
-    );
+    // ── Gas totals with Execution vs Intrinsic split ───────────────────────────────
+    if let Some(on_chain) = report.on_chain_gas_used {
+        let execution_gas = report.total_evm_gas;
+        let intrinsic_gas = on_chain.saturating_sub(execution_gas);
+        out += &format!(
+            "  {:<34} {}\n",
+            "Total Gas Used (on-chain):".bold(),
+            on_chain.to_string().green().bold()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "  ├─ Execution:".dimmed(),
+            execution_gas.to_string().green()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "  └─ Intrinsic (base + calldata):".dimmed(),
+            intrinsic_gas.to_string().yellow()
+        );
+    } else {
+        out += &format!(
+            "  {:<34} {}\n",
+            "EVM Trace Gas (Total):".bold(),
+            report.total_evm_gas.to_string().green()
+        );
+    }
 
     if report.total_stylus_ink > 0 {
         out += &format!(
