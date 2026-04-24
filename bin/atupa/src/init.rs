@@ -273,10 +273,10 @@ pub enum ProjectKind {
 impl ProjectKind {
     pub fn label(&self) -> &'static str {
         match self {
-            ProjectKind::Foundry    => "Foundry",
-            ProjectKind::Hardhat   => "Hardhat",
+            ProjectKind::Foundry => "Foundry",
+            ProjectKind::Hardhat => "Hardhat",
             ProjectKind::StylusOnly => "Arbitrum Stylus (Rust-only)",
-            ProjectKind::Unknown   => "Unknown",
+            ProjectKind::Unknown => "Unknown",
         }
     }
 }
@@ -301,7 +301,7 @@ pub fn detect_project() -> ProjectKind {
 pub fn detect_protocol() -> Option<String> {
     // Check for common protocol keywords in project files
     let keywords = [("lido", "lido"), ("aave", "aave"), ("gho", "aave")];
-    
+
     // Check package.json or foundry.toml if they exist
     let files = ["package.json", "foundry.toml", "Cargo.toml"];
     for file in files {
@@ -355,10 +355,10 @@ pub fn execute_init(args: InitArgs) -> Result<()> {
 
     // ── 1. atupa.toml ─────────────────────────────────────────────────────────
     let toml_content = match kind {
-        ProjectKind::Foundry    => ATUPA_TOML_FOUNDRY,
-        ProjectKind::Hardhat   => ATUPA_TOML_HARDHAT,
+        ProjectKind::Foundry => ATUPA_TOML_FOUNDRY,
+        ProjectKind::Hardhat => ATUPA_TOML_HARDHAT,
         ProjectKind::StylusOnly => ATUPA_TOML_STYLUS,
-        ProjectKind::Unknown   => ATUPA_TOML_FOUNDRY, // sensible default
+        ProjectKind::Unknown => ATUPA_TOML_FOUNDRY, // sensible default
     };
 
     scaffold_file(
@@ -371,8 +371,7 @@ pub fn execute_init(args: InitArgs) -> Result<()> {
 
     // ── 2. .github/workflows/atupa.yml ───────────────────────────────────────
     let workflow_dir = Path::new(".github/workflows");
-    fs::create_dir_all(workflow_dir)
-        .context("Failed to create .github/workflows directory")?;
+    fs::create_dir_all(workflow_dir).context("Failed to create .github/workflows directory")?;
 
     scaffold_file(
         ".github/workflows/atupa.yml",
@@ -385,8 +384,7 @@ pub fn execute_init(args: InitArgs) -> Result<()> {
     // ── 3. Profile Script (project-specific) ─────────────────────────────────
     match kind {
         ProjectKind::Foundry | ProjectKind::StylusOnly => {
-            fs::create_dir_all("script")
-                .context("Failed to create script/ directory")?;
+            fs::create_dir_all("script").context("Failed to create script/ directory")?;
             scaffold_file(
                 "script/AtupaProfile.s.sol",
                 FORGE_PROFILE_SCRIPT,
@@ -396,8 +394,7 @@ pub fn execute_init(args: InitArgs) -> Result<()> {
             )?;
         }
         ProjectKind::Hardhat => {
-            fs::create_dir_all("scripts")
-                .context("Failed to create scripts/ directory")?;
+            fs::create_dir_all("scripts").context("Failed to create scripts/ directory")?;
             scaffold_file(
                 "scripts/AtupaProfile.js",
                 HARDHAT_PROFILE_SCRIPT,
@@ -489,8 +486,7 @@ fn scaffold_file(
         skipped.push(path.to_string());
         return Ok(());
     }
-    fs::write(path, content)
-        .with_context(|| format!("Failed to write {path}"))?;
+    fs::write(path, content).with_context(|| format!("Failed to write {path}"))?;
     created.push(path.to_string());
     Ok(())
 }

@@ -69,7 +69,7 @@ impl Aggregator {
                         let clean_hex = hex_addr.trim_start_matches("0x");
                         let padded = format!("{:0>40}", clean_hex);
                         let extracted = &padded[padded.len() - 40..];
-                        target_address = Some(format!("0x{}", extracted)); 
+                        target_address = Some(format!("0x{}", extracted));
                     }
 
                     // Attempt to extract the 4-byte selector from Memory using Offset & Length
@@ -185,7 +185,7 @@ impl Aggregator {
             })
             .collect();
 
-        stacks.sort_by(|a, b| b.weight.cmp(&a.weight));
+        stacks.sort_by_key(|b| std::cmp::Reverse(b.weight));
         debug!("Built {} unique collapsed stacks", stacks.len());
 
         stacks
@@ -201,13 +201,43 @@ mod tests {
     fn test_aggregator_collapses_simple_call() {
         let steps = vec![
             // Root context opcodes (Depth 1)
-            TraceStep { op: "PUSH1".into(), gas: 100, gas_cost: 3, depth: 1, ..Default::default() },
-            TraceStep { pc: 1, op: "CALL".into(), gas: 90, depth: 1, ..Default::default() },
+            TraceStep {
+                op: "PUSH1".into(),
+                gas: 100,
+                gas_cost: 3,
+                depth: 1,
+                ..Default::default()
+            },
+            TraceStep {
+                pc: 1,
+                op: "CALL".into(),
+                gas: 90,
+                depth: 1,
+                ..Default::default()
+            },
             // Sub-context opcodes (Depth 2)
-            TraceStep { op: "SSTORE".into(), gas: 50, gas_cost: 20, depth: 2, ..Default::default() },
-            TraceStep { pc: 1, op: "RETURN".into(), gas: 20, depth: 2, ..Default::default() },
+            TraceStep {
+                op: "SSTORE".into(),
+                gas: 50,
+                gas_cost: 20,
+                depth: 2,
+                ..Default::default()
+            },
+            TraceStep {
+                pc: 1,
+                op: "RETURN".into(),
+                gas: 20,
+                depth: 2,
+                ..Default::default()
+            },
             // Back to root (Depth 1)
-            TraceStep { pc: 2, op: "STOP".into(), gas: 15, depth: 1, ..Default::default() },
+            TraceStep {
+                pc: 2,
+                op: "STOP".into(),
+                gas: 15,
+                depth: 1,
+                ..Default::default()
+            },
         ];
 
         let stacks = Aggregator::build_collapsed_stacks(&steps);
@@ -222,11 +252,39 @@ mod tests {
     #[test]
     fn test_aggregator_recursive_calls() {
         let steps = vec![
-            TraceStep { op: "CALL".into(),   gas: 1000, depth: 1, ..Default::default() },
-            TraceStep { op: "CALL".into(),   gas: 900,  depth: 2, ..Default::default() },
-            TraceStep { op: "SSTORE".into(), gas: 800,  gas_cost: 5000, depth: 3, ..Default::default() },
-            TraceStep { pc: 1, op: "RETURN".into(), gas: 700, depth: 3, ..Default::default() },
-            TraceStep { pc: 1, op: "RETURN".into(), gas: 600, depth: 2, ..Default::default() },
+            TraceStep {
+                op: "CALL".into(),
+                gas: 1000,
+                depth: 1,
+                ..Default::default()
+            },
+            TraceStep {
+                op: "CALL".into(),
+                gas: 900,
+                depth: 2,
+                ..Default::default()
+            },
+            TraceStep {
+                op: "SSTORE".into(),
+                gas: 800,
+                gas_cost: 5000,
+                depth: 3,
+                ..Default::default()
+            },
+            TraceStep {
+                pc: 1,
+                op: "RETURN".into(),
+                gas: 700,
+                depth: 3,
+                ..Default::default()
+            },
+            TraceStep {
+                pc: 1,
+                op: "RETURN".into(),
+                gas: 600,
+                depth: 2,
+                ..Default::default()
+            },
         ];
 
         let stacks = Aggregator::build_collapsed_stacks(&steps);
@@ -240,7 +298,12 @@ mod tests {
     #[test]
     fn test_aggregator_revert_propagation() {
         let steps = vec![
-            TraceStep { op: "CALL".into(),   gas: 1000, depth: 1, ..Default::default() },
+            TraceStep {
+                op: "CALL".into(),
+                gas: 1000,
+                depth: 1,
+                ..Default::default()
+            },
             TraceStep {
                 op: "REVERT".into(),
                 gas: 900,
@@ -298,7 +361,13 @@ mod tests {
                 memory: Some(memory),
                 ..Default::default()
             },
-            TraceStep { pc: 1, op: "STOP".into(), gas: 900, depth: 1, ..Default::default() },
+            TraceStep {
+                pc: 1,
+                op: "STOP".into(),
+                gas: 900,
+                depth: 1,
+                ..Default::default()
+            },
         ];
 
         let stacks = Aggregator::build_collapsed_stacks(&steps);

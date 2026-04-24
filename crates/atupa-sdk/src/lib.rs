@@ -81,17 +81,25 @@ pub mod profile {
         } else {
             pb.set_message("Detecting network and fetching execution trace…");
             let client = NitroClient::new(rpc.to_string());
-            let report = tokio::time::timeout(
-                Duration::from_secs(30),
-                client.trace_transaction(tx),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("RPC timed out after 30s — is the node reachable at {rpc}?"))?
-            .map_err(|e| anyhow::anyhow!("RPC error: {e}"))?;
+            let report =
+                tokio::time::timeout(Duration::from_secs(30), client.trace_transaction(tx))
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!("RPC timed out after 30s — is the node reachable at {rpc}?")
+                    })?
+                    .map_err(|e| anyhow::anyhow!("RPC error: {e}"))?;
 
             let network = get_network_name(report.chain_id);
-            let evm_count = report.steps.iter().filter(|s| s.vm == NitroVmKind::Evm).count();
-            let wasm_count = report.steps.iter().filter(|s| s.vm == NitroVmKind::Stylus).count();
+            let evm_count = report
+                .steps
+                .iter()
+                .filter(|s| s.vm == NitroVmKind::Evm)
+                .count();
+            let wasm_count = report
+                .steps
+                .iter()
+                .filter(|s| s.vm == NitroVmKind::Stylus)
+                .count();
             pb.set_message(format!(
                 "Processing {evm_count} EVM + {wasm_count} Stylus steps from {network}…"
             ));
@@ -101,11 +109,8 @@ pub mod profile {
             // Stylus steps already carry depth = (parent CALL depth + 1) and a
             // gas_cost equal to ink / 10_000, so the Aggregator nests them under
             // their EVM CALL frames without any special-casing.
-            let unified_steps: Vec<atupa_core::TraceStep> = report
-                .steps
-                .iter()
-                .map(|s| s.to_trace_step())
-                .collect();
+            let unified_steps: Vec<atupa_core::TraceStep> =
+                report.steps.iter().map(|s| s.to_trace_step()).collect();
 
             let normalized = AtupaParser::normalize_raw(unified_steps);
             let mut combined = Aggregator::build_collapsed_stacks(&normalized);
@@ -114,12 +119,11 @@ pub mod profile {
             pb.set_message("Resolving contract names via Etherscan…");
             let resolver = EtherscanResolver::new(etherscan_key, report.chain_id);
             for stack in &mut combined {
-                if stack.vm_kind == VmKind::Evm {
-                    if let Some(addr) = &stack.target_address
-                        && let Some(name) = resolver.resolve_contract_name(addr).await
-                    {
-                        stack.target_address = Some(name);
-                    }
+                if stack.vm_kind == VmKind::Evm
+                    && let Some(addr) = &stack.target_address
+                    && let Some(name) = resolver.resolve_contract_name(addr).await
+                {
+                    stack.target_address = Some(name);
                 }
             }
 
@@ -128,7 +132,7 @@ pub mod profile {
 
         // Sort EVM stacks descending by weight; Stylus stacks come after
         let evm_end = stacks.partition_point(|s| s.vm_kind == VmKind::Evm);
-        stacks[..evm_end].sort_by(|a, b| b.weight.cmp(&a.weight));
+        stacks[..evm_end].sort_by_key(|b| std::cmp::Reverse(b.weight));
 
         // 2. Render + save ─────────────────────────────────────────────────────
         pb.set_message("Generating SVG flamegraph…");
@@ -255,7 +259,9 @@ pub mod profile {
                 depth: 1,
                 vm_kind: VmKind::Stylus,
                 target_address: None,
-                resolved_label: Some("storage_load_bytes32 (4,215 ink → 0.42 gas-equiv)".to_string()),
+                resolved_label: Some(
+                    "storage_load_bytes32 (4,215 ink → 0.42 gas-equiv)".to_string(),
+                ),
                 reverted: false,
             },
             CollapsedStack {
@@ -265,7 +271,9 @@ pub mod profile {
                 depth: 1,
                 vm_kind: VmKind::Stylus,
                 target_address: None,
-                resolved_label: Some("storage_flush_cache (40,010 ink → 4.00 gas-equiv)".to_string()),
+                resolved_label: Some(
+                    "storage_flush_cache (40,010 ink → 4.00 gas-equiv)".to_string(),
+                ),
                 reverted: false,
             },
             CollapsedStack {
@@ -281,4 +289,3 @@ pub mod profile {
         ]
     }
 }
-

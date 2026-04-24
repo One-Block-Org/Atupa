@@ -43,10 +43,11 @@ fn flush_cache(cache: &HashMap<String, String>) {
 
     // Ensure the parent directory exists
     if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("⚠️  Could not create cache dir {:?}: {}", parent, e);
-            return;
-        }
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        log::warn!("⚠️  Could not create cache dir {:?}: {}", parent, e);
+        return;
+    }
 
     match serde_json::to_string_pretty(cache) {
         Ok(json) => {
@@ -144,7 +145,11 @@ impl EtherscanResolver {
                         return Some(name);
                     }
                     _ => {
-                        log::debug!("❌ Etherscan hit but no name for {}: {:?}", address, api_res);
+                        log::debug!(
+                            "❌ Etherscan hit but no name for {}: {:?}",
+                            address,
+                            api_res
+                        );
                     }
                 }
             } else {

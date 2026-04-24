@@ -45,13 +45,15 @@ impl SvgGenerator {
     /// - Reverted stacks use a red gradient.
     pub fn generate_flamegraph(stacks: &[CollapsedStack]) -> anyhow::Result<String> {
         if stacks.is_empty() || stacks.iter().all(|s| s.weight == 0) {
-            return Ok("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 60\" \
+            return Ok(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 60\" \
                        style=\"background-color:#0d1117\">\
                        <text x=\"14\" y=\"34\" fill=\"#94a3b8\" \
                        font-family=\"Inter,monospace\" font-size=\"13\">\
                        No execution data found.\
                        </text></svg>"
-                .to_string());
+                    .to_string(),
+            );
         }
 
         const SVG_W: f64 = 1000.0;
@@ -65,8 +67,10 @@ impl SvgGenerator {
 
         let evm_stacks: Vec<&CollapsedStack> =
             stacks.iter().filter(|s| s.vm_kind == VmKind::Evm).collect();
-        let wasm_stacks: Vec<&CollapsedStack> =
-            stacks.iter().filter(|s| s.vm_kind == VmKind::Stylus).collect();
+        let wasm_stacks: Vec<&CollapsedStack> = stacks
+            .iter()
+            .filter(|s| s.vm_kind == VmKind::Stylus)
+            .collect();
         let has_wasm = !wasm_stacks.is_empty();
 
         // Gather unique depths for EVM stacks, sorted ascending (depth 1 on top).
@@ -84,10 +88,8 @@ impl SvgGenerator {
 
         // ── EVM depth lanes ───────────────────────────────────────────────────
         for depth in &depths {
-            let lane_stacks: Vec<&&CollapsedStack> = evm_stacks
-                .iter()
-                .filter(|s| s.depth == *depth)
-                .collect();
+            let lane_stacks: Vec<&&CollapsedStack> =
+                evm_stacks.iter().filter(|s| s.depth == *depth).collect();
             let lane_weight: u64 = lane_stacks.iter().map(|s| s.weight).sum();
             if lane_weight == 0 {
                 continue;
@@ -108,8 +110,7 @@ impl SvgGenerator {
                 } else {
                     "box-evm"
                 };
-                let label =
-                    Self::make_label(stack, bar_w);
+                let label = Self::make_label(stack, bar_w);
                 let pct = if global_evm_weight > 0 {
                     stack.weight as f64 / global_evm_weight as f64 * 100.0
                 } else {

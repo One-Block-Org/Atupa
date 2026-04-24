@@ -68,13 +68,13 @@ mod tests {
             env::set_var("ATUPA_RPC_URL", "http://test-rpc.local");
             env::set_var("ATUPA_ETHERSCAN_KEY", "test-key-123");
         }
-        
+
         // Reloading should pick up env vars due to Env::prefixed("ATUPA_")
         let config = AtupaConfig::load();
-        
+
         assert_eq!(config.rpc_url, "http://test-rpc.local");
         assert_eq!(config.etherscan_key, Some("test-key-123".to_string()));
-        
+
         unsafe {
             env::remove_var("ATUPA_RPC_URL");
             env::remove_var("ATUPA_ETHERSCAN_KEY");

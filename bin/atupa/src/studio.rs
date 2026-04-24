@@ -1,10 +1,10 @@
-use rust_embed::RustEmbed;
 use axum::{
-    routing::get,
-    response::{Html, IntoResponse, Response},
-    http::{header, StatusCode, Uri},
     Router,
+    http::{StatusCode, Uri, header},
+    response::{Html, IntoResponse, Response},
+    routing::get,
 };
+use rust_embed::RustEmbed;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -27,21 +27,24 @@ impl StudioServer {
         let report_data = self.report_json.clone();
 
         let app = Router::new()
-            .route("/auto-load.json", get(move || {
-                let data = report_data.clone();
-                async move {
-                    if let Some(json) = &*data {
-                        Response::builder()
-                            .header(header::CONTENT_TYPE, "application/json")
-                            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                            .body(axum::body::Body::from(json.clone()))
-                            .unwrap()
-                            .into_response()
-                    } else {
-                        StatusCode::NOT_FOUND.into_response()
+            .route(
+                "/auto-load.json",
+                get(move || {
+                    let data = report_data.clone();
+                    async move {
+                        if let Some(json) = &*data {
+                            Response::builder()
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                                .body(axum::body::Body::from(json.clone()))
+                                .unwrap()
+                                .into_response()
+                        } else {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
                     }
-                }
-            }))
+                }),
+            )
             .fallback(static_handler);
 
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -69,7 +72,7 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
                 .into_response()
         }
         None => {
-            // If it's a sub-path, maybe it's an SPA route? 
+            // If it's a sub-path, maybe it's an SPA route?
             // Check if adding .html helps (unlikely for Vite but good for some)
             // For Vite SPA, we usually just return index.html for any non-asset route
             index_html().await
@@ -79,9 +82,11 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 
 async fn index_html() -> Response {
     match Asset::get("index.html") {
-        Some(content) => {
-            Html(content.data).into_response()
-        }
-        None => (StatusCode::NOT_FOUND, "Studio assets not found. Did you run `npm run build` in the studio directory?").into_response(),
+        Some(content) => Html(content.data).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            "Studio assets not found. Did you run `npm run build` in the studio directory?",
+        )
+            .into_response(),
     }
 }

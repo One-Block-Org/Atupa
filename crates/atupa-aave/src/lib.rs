@@ -342,16 +342,66 @@ impl AaveDeepTracer {
         let target_gho = self.extract_gho_metrics(target_steps);
 
         let rows = vec![
-            DiffRow::new("Total Gas",          base.total_gas as f64,          target.total_gas as f64,          true),
-            DiffRow::new("Liquidation Gas",    base.liquidation_gas as f64,    target.liquidation_gas as f64,    true),
-            DiffRow::new("Storage Reads (SLOAD)",  base.storage_reads as f64,  target.storage_reads as f64,      true),
-            DiffRow::new("Storage Writes (SSTORE)", base.storage_writes as f64,target.storage_writes as f64,     true),
-            DiffRow::new("External Calls",     base.external_calls as f64,     target.external_calls as f64,     true),
-            DiffRow::new("Oracle Calls",       base.oracle_calls as f64,       target.oracle_calls as f64,       true),
-            DiffRow::new("Max Call Depth",     base.max_depth as f64,          target.max_depth as f64,          true),
-            DiffRow::new("Liq. Efficiency",    base.liquidation_efficiency,    target.liquidation_efficiency,    true),
-            DiffRow::new("GHO Mint Count",     base_gho.mint_count as f64,     target_gho.mint_count as f64,     false),
-            DiffRow::new("GHO Burn Count",     base_gho.burn_count as f64,     target_gho.burn_count as f64,     false),
+            DiffRow::new(
+                "Total Gas",
+                base.total_gas as f64,
+                target.total_gas as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Liquidation Gas",
+                base.liquidation_gas as f64,
+                target.liquidation_gas as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Reads (SLOAD)",
+                base.storage_reads as f64,
+                target.storage_reads as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Writes (SSTORE)",
+                base.storage_writes as f64,
+                target.storage_writes as f64,
+                true,
+            ),
+            DiffRow::new(
+                "External Calls",
+                base.external_calls as f64,
+                target.external_calls as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Oracle Calls",
+                base.oracle_calls as f64,
+                target.oracle_calls as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Max Call Depth",
+                base.max_depth as f64,
+                target.max_depth as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Liq. Efficiency",
+                base.liquidation_efficiency,
+                target.liquidation_efficiency,
+                true,
+            ),
+            DiffRow::new(
+                "GHO Mint Count",
+                base_gho.mint_count as f64,
+                target_gho.mint_count as f64,
+                false,
+            ),
+            DiffRow::new(
+                "GHO Burn Count",
+                base_gho.burn_count as f64,
+                target_gho.burn_count as f64,
+                false,
+            ),
         ];
 
         Ok(ProtocolDiffReport {

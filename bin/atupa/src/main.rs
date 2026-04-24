@@ -30,7 +30,7 @@ use atupa_output::SvgGenerator;
 use atupa_parser::Parser as TraceParser;
 use atupa_parser::aggregator::Aggregator;
 use atupa_rpc::{EthClient, RawStructLog};
- 
+
 mod init;
 mod studio;
 mod thresholds;
@@ -51,12 +51,7 @@ SOURCE: https://github.com/One-Block-Org/Atupa",
 )]
 struct Cli {
     /// Arbitrum / Ethereum RPC endpoint (or set ATUPA_RPC_URL)
-    #[arg(
-        short,
-        long,
-        global = true,
-        value_name = "URL"
-    )]
+    #[arg(short, long, global = true, value_name = "URL")]
     rpc: Option<String>,
 
     #[command(subcommand)]
@@ -186,7 +181,7 @@ enum Commands {
     },
 }
 
-#[derive(Clone, ValueEnum, Debug)]
+#[derive(Clone, ValueEnum, Debug, PartialEq, Eq)]
 enum OutputFormat {
     /// Human-readable terminal summary (default)
     Summary,
@@ -264,6 +259,7 @@ async fn main() -> Result<()> {
             markdown,
             svg,
             protocol,
+            output,
         } => {
             cmd_diff(
                 &config,
@@ -273,6 +269,7 @@ async fn main() -> Result<()> {
                 diff_config,
                 markdown,
                 svg,
+                output,
                 protocol,
             )
             .await?;
@@ -314,9 +311,15 @@ async fn cmd_profile(
     // Route output through the standard artifacts directory (same as capture)
     let svg_path = resolve_artifact_path(out, "profile", tx, "svg");
 
-    let (out_path, network) = atupa::execute_profile(tx, &config.rpc_url, demo, Some(svg_path), config.etherscan_key.clone())
-        .await
-        .context("Profile command failed")?;
+    let (out_path, network) = atupa::execute_profile(
+        tx,
+        &config.rpc_url,
+        demo,
+        Some(svg_path),
+        config.etherscan_key.clone(),
+    )
+    .await
+    .context("Profile command failed")?;
 
     eprintln!();
     eprintln!(
@@ -335,7 +338,6 @@ async fn cmd_profile(
     Ok(())
 }
 
-
 // ─── Capture Command ──────────────────────────────────────────────────────────
 
 async fn cmd_capture(
@@ -352,12 +354,12 @@ async fn cmd_capture(
     // Phase 1: fetch ──────────────────────────────────────────────────────────
     let pb = spinner("Detecting network and fetching execution trace…");
     let client = NitroClient::new(config.rpc_url.clone());
- 
+
     let mut report = client
         .trace_transaction(&tx)
         .await
         .context("Failed to fetch trace — ensure the RPC endpoint is valid and accessible.")?;
- 
+
     let network_name = get_network_name(report.chain_id);
     pb.finish_with_message(format!(
         "{} Captured trace from {} ({} EVM steps{} )",
@@ -365,7 +367,10 @@ async fn cmd_capture(
         network_name.cyan().bold(),
         evm_count(&report).to_string().green(),
         if report.total_stylus_ink > 0 {
-            format!(" + {} Stylus HostIOs", report.stylus_steps().len().to_string().yellow())
+            format!(
+                " + {} Stylus HostIOs",
+                report.stylus_steps().len().to_string().yellow()
+            )
         } else {
             "".into()
         }
@@ -379,21 +384,19 @@ async fn cmd_capture(
     if let Some(key) = config.etherscan_key.clone() {
         let pb_names = spinner("Resolving contract names via Etherscan…");
         let resolver = atupa_rpc::etherscan::EtherscanResolver::new(Some(key), report.chain_id);
-        
+
         let mut addresses = std::collections::HashSet::new();
         for step in &report.steps {
-            if let Some(evm) = &step.evm {
-                if evm.op.contains("CALL") || evm.op.contains("CREATE") {
-                    if let Some(stack) = &evm.stack {
-                        if stack.len() >= 2 {
-                            let hex_addr = &stack[stack.len() - 2];
-                            let clean_hex = hex_addr.trim_start_matches("0x");
-                            let padded = format!("{:0>40}", clean_hex);
-                            let extracted = &padded[padded.len() - 40..];
-                            addresses.insert(format!("0x{}", extracted));
-                        }
-                    }
-                }
+            if let Some(evm) = &step.evm
+                && (evm.op.contains("CALL") || evm.op.contains("CREATE"))
+                && let Some(stack) = &evm.stack
+                && stack.len() >= 2
+            {
+                let hex_addr = &stack[stack.len() - 2];
+                let clean_hex = hex_addr.trim_start_matches("0x");
+                let padded = format!("{:0>40}", clean_hex);
+                let extracted = &padded[padded.len() - 40..];
+                addresses.insert(format!("0x{}", extracted));
             }
         }
 
@@ -415,7 +418,8 @@ async fn cmd_capture(
         let pb_svg = spinner("Generating SVG flamegraph…");
 
         // Convert report steps → collapsed stacks → SVG (zero extra RPC calls)
-        let trace_steps: Vec<atupa_core::TraceStep> = report.steps.iter().map(|s| s.to_trace_step()).collect();
+        let trace_steps: Vec<atupa_core::TraceStep> =
+            report.steps.iter().map(|s| s.to_trace_step()).collect();
         let normalized = TraceParser::normalize_raw(trace_steps);
         let stacks = Aggregator::build_collapsed_stacks(&normalized);
         let svg = SvgGenerator::generate_flamegraph(&stacks)
@@ -432,14 +436,18 @@ async fn cmd_capture(
         std::fs::write(&svg_out, svg)
             .with_context(|| format!("Failed to write SVG to '{svg_out}'"))?;
 
-        pb_svg.finish_with_message(format!("{} SVG saved → {}", "✔".green().bold(), svg_out.green().bold()));
+        pb_svg.finish_with_message(format!(
+            "{} SVG saved → {}",
+            "✔".green().bold(),
+            svg_out.green().bold()
+        ));
         svg_path = Some(svg_out);
     }
 
     // Phase 3: render report ──────────────────────────────────────────────────
     let pb2 = spinner("Rendering report…");
     let summary_text = render_capture_summary(&report);
-    
+
     let rendered = match format {
         OutputFormat::Summary => summary_text.clone(),
         OutputFormat::Json => serde_json::to_string_pretty(&report)?,
@@ -464,7 +472,11 @@ async fn cmd_capture(
     );
 
     if let Some(ref svg) = svg_path {
-        eprintln!("{} SVG profile saved to {}", "✔".green().bold(), svg.cyan().bold());
+        eprintln!(
+            "{} SVG profile saved to {}",
+            "✔".green().bold(),
+            svg.cyan().bold()
+        );
     }
 
     Ok(Some(report_path))
@@ -491,7 +503,9 @@ async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result
     let client = NitroClient::new(config.rpc_url.clone());
 
     // Fetch the top-level calldata selector (non-fatal) — gives us the real function being called
-    let top_level_selector = eth_client.get_transaction_input(&tx).await
+    let top_level_selector = eth_client
+        .get_transaction_input(&tx)
+        .await
         .and_then(|input| EthClient::selector_from_input(&input));
 
     let pb = spinner(&format!("Fetching trace for {label} audit…"));
@@ -556,7 +570,6 @@ async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result
     Ok(())
 }
 
-
 // ─── Diff Command ─────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -587,7 +600,7 @@ async fn cmd_diff(
     let eth_client = EthClient::new(config.rpc_url.clone());
 
     let pb = spinner("Fetching both traces and receipts concurrently…");
-    
+
     // Fetch traces
     let (base_report, target_report) = tokio::try_join!(
         client.trace_transaction(&base),
@@ -623,11 +636,11 @@ async fn cmd_diff(
         0.0
     };
 
-    let base_intrinsic = if base_total_gas > base_unified_cost as u64 { base_total_gas - base_unified_cost as u64 } else { 0 };
-    let target_intrinsic = if target_total_gas > target_unified_cost as u64 { target_total_gas - target_unified_cost as u64 } else { 0 };
+    let base_intrinsic = base_total_gas.saturating_sub(base_unified_cost as u64);
+    let target_intrinsic = target_total_gas.saturating_sub(target_unified_cost as u64);
 
     let div = "─".repeat(70).dimmed().to_string();
-    
+
     if output_format == OutputFormat::Json {
         let diff_report = serde_json::json!({
             "type": "diff",
@@ -650,7 +663,7 @@ async fn cmd_diff(
 
     println!("{}", "  EXECUTION DIFF".bold().underline());
     println!("{div}");
-    
+
     // Print Table Header
     println!(
         "  {:<25} {:<15} {:<15} {}",
@@ -664,11 +677,17 @@ async fn cmd_diff(
     let colorize_delta = |delta: f64, pct: f64| -> String {
         let sign = if delta >= 0.0 { "+" } else { "" };
         if delta > 0.0 {
-            format!("{sign}{delta:.0} ({sign}{pct:.1}%)").red().to_string()
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .red()
+                .to_string()
         } else if delta < 0.0 {
-            format!("{sign}{delta:.0} ({sign}{pct:.1}%)").green().to_string()
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .green()
+                .to_string()
         } else {
-            format!("{sign}{delta:.0} ({sign}{pct:.1}%)").dimmed().to_string()
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .dimmed()
+                .to_string()
         }
     };
 
@@ -689,7 +708,11 @@ async fn cmd_diff(
     );
 
     let intrinsic_delta = target_intrinsic as f64 - base_intrinsic as f64;
-    let intrinsic_pct = if base_intrinsic > 0 { intrinsic_delta / base_intrinsic as f64 * 100.0 } else { 0.0 };
+    let intrinsic_pct = if base_intrinsic > 0 {
+        intrinsic_delta / base_intrinsic as f64 * 100.0
+    } else {
+        0.0
+    };
     println!(
         "  {:<25} {:<15} {:<15} {}",
         "↳ Intrinsic Gas:",
@@ -697,14 +720,18 @@ async fn cmd_diff(
         target_intrinsic.to_string().dimmed(),
         colorize_delta(intrinsic_delta, intrinsic_pct)
     );
-    
+
     println!("{div}");
 
     // Step count comparison
     let base_evm = evm_count(&base_report);
     let tgt_evm = evm_count(&target_report);
     let evm_delta = tgt_evm as f64 - base_evm as f64;
-    let evm_pct = if base_evm > 0 { evm_delta / base_evm as f64 * 100.0 } else { 0.0 };
+    let evm_pct = if base_evm > 0 {
+        evm_delta / base_evm as f64 * 100.0
+    } else {
+        0.0
+    };
     println!(
         "  {:<25} {:<15} {:<15} {}",
         "EVM Steps:",
@@ -712,11 +739,15 @@ async fn cmd_diff(
         tgt_evm.to_string().yellow(),
         colorize_delta(evm_delta, evm_pct)
     );
-    
+
     let base_stylus = base_report.stylus_steps().len();
     let tgt_stylus = target_report.stylus_steps().len();
     let stylus_delta = tgt_stylus as f64 - base_stylus as f64;
-    let stylus_pct = if base_stylus > 0 { stylus_delta / base_stylus as f64 * 100.0 } else { 0.0 };
+    let stylus_pct = if base_stylus > 0 {
+        stylus_delta / base_stylus as f64 * 100.0
+    } else {
+        0.0
+    };
     println!(
         "  {:<25} {:<15} {:<15} {}",
         "Stylus Cross-VM Calls:",
@@ -731,8 +762,16 @@ async fn cmd_diff(
     let mut proto_name = String::new();
 
     if let Some(ref proto) = protocol {
-        let base_steps: Vec<TraceStep> = base_report.steps.iter().map(|s| s.to_trace_step()).collect();
-        let target_steps: Vec<TraceStep> = target_report.steps.iter().map(|s| s.to_trace_step()).collect();
+        let base_steps: Vec<TraceStep> = base_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
+        let target_steps: Vec<TraceStep> = target_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
 
         let proto_report = match proto {
             Protocol::Aave => {
@@ -749,11 +788,17 @@ async fn cmd_diff(
             Ok(report) => {
                 proto_name = report.protocol.clone();
                 let proto_div = "─".repeat(70).dimmed().to_string();
-                println!("\n  {} DEEP DIFF", proto_name.to_uppercase().bold().underline());
+                println!(
+                    "\n  {} DEEP DIFF",
+                    proto_name.to_uppercase().bold().underline()
+                );
                 println!("{proto_div}");
                 println!(
                     "  {:<28} {:<15} {:<15} {}",
-                    "Metric".bold(), "Base".bold(), "Target".bold(), "Delta".bold()
+                    "Metric".bold(),
+                    "Base".bold(),
+                    "Target".bold(),
+                    "Delta".bold()
                 );
                 println!("{proto_div}");
 
@@ -763,7 +808,7 @@ async fn cmd_diff(
                     let delta_colored = if row.delta == 0.0 {
                         delta_str.dimmed().to_string()
                     } else if (row.delta > 0.0) == row.higher_is_worse {
-                        delta_str.red().to_string()   // bad change
+                        delta_str.red().to_string() // bad change
                     } else {
                         delta_str.green().to_string() // good change
                     };
@@ -799,10 +844,18 @@ async fn cmd_diff(
             | **EVM Steps** | {} | {} | {} |\n\
             | **Stylus Calls** | {} | {} | {} |\n\n\
             *Profiled via Atupa Unified Tracer*\n",
-            base_total_gas, target_total_gas, format_plain_delta(total_gas_delta, total_gas_pct),
-            base_unified_cost, target_unified_cost, format_plain_delta(unified_delta, unified_pct),
-            base_evm, tgt_evm, format_plain_delta(evm_delta, evm_pct),
-            base_stylus, tgt_stylus, format_plain_delta(stylus_delta, stylus_pct)
+            base_total_gas,
+            target_total_gas,
+            format_plain_delta(total_gas_delta, total_gas_pct),
+            base_unified_cost,
+            target_unified_cost,
+            format_plain_delta(unified_delta, unified_pct),
+            base_evm,
+            tgt_evm,
+            format_plain_delta(evm_delta, evm_pct),
+            base_stylus,
+            tgt_stylus,
+            format_plain_delta(stylus_delta, stylus_pct)
         );
         let out_path = format!("artifacts/diff/{}_vs_{}.md", &base[..10], &target[..10]);
         std::fs::create_dir_all("artifacts/diff").ok();
@@ -814,9 +867,13 @@ async fn cmd_diff(
             section.push_str("|--------|------|--------|-------|\n");
             for row in &proto_diff_rows {
                 let sign = if row.delta >= 0.0 { "+" } else { "" };
-                let emoji = if row.delta == 0.0 { "" }
-                    else if (row.delta > 0.0) == row.higher_is_worse { "🔴 " }
-                    else { "🟢 " };
+                let emoji = if row.delta == 0.0 {
+                    ""
+                } else if (row.delta > 0.0) == row.higher_is_worse {
+                    "🔴 "
+                } else {
+                    "🟢 "
+                };
                 section.push_str(&format!(
                     "| **{}** | {} | {} | {}{}{:.0} ({}{:.1}%) |\n",
                     row.metric, row.base, row.target, emoji, sign, row.delta, sign, row.pct
@@ -832,18 +889,23 @@ async fn cmd_diff(
     }
 
     if svg {
-        let base_trace_steps: Vec<atupa_core::TraceStep> = base_report.steps.iter().map(|s| s.to_trace_step()).collect();
+        let base_trace_steps: Vec<atupa_core::TraceStep> = base_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
         let base_normalized = TraceParser::normalize_raw(base_trace_steps);
         let base_stacks = Aggregator::build_collapsed_stacks(&base_normalized);
 
-        let target_trace_steps: Vec<atupa_core::TraceStep> = target_report.steps.iter().map(|s| s.to_trace_step()).collect();
+        let target_trace_steps: Vec<atupa_core::TraceStep> = target_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
         let target_normalized = TraceParser::normalize_raw(target_trace_steps);
         let target_stacks = Aggregator::build_collapsed_stacks(&target_normalized);
 
-        let svg_content = atupa_output::generate_diff_flamegraph(
-            &base_stacks,
-            &target_stacks,
-        )?;
+        let svg_content = atupa_output::generate_diff_flamegraph(&base_stacks, &target_stacks)?;
         let svg_path = format!("artifacts/diff/{}_vs_{}.svg", &base[..10], &target[..10]);
         std::fs::create_dir_all("artifacts/diff").ok();
         std::fs::write(&svg_path, svg_content).context("Failed to write diff flamegraph SVG")?;
@@ -862,30 +924,45 @@ async fn cmd_diff(
     if let Some(t) = threshold {
         // Simple Mode override
         if total_gas_pct > t {
-            failures.push(format!("Total Gas increased by {:.1}% (limit: {:.1}%)", total_gas_pct, t));
+            failures.push(format!(
+                "Total Gas increased by {:.1}% (limit: {:.1}%)",
+                total_gas_pct, t
+            ));
         }
     } else if let Some(ref cfg) = config_toml {
         // TOML Config evaluation
         if let Some(diff_cfg) = &cfg.diff {
-            if let Some(max_total) = diff_cfg.max_total_gas_increase_percent {
-                if total_gas_pct > max_total {
-                    failures.push(format!("Total Gas increased by {:.1}% (limit: {:.1}%)", total_gas_pct, max_total));
-                }
+            if let Some(max_total) = diff_cfg.max_total_gas_increase_percent
+                && total_gas_pct > max_total
+            {
+                failures.push(format!(
+                    "Total Gas increased by {:.1}% (limit: {:.1}%)",
+                    total_gas_pct, max_total
+                ));
             }
-            if let Some(max_exec) = diff_cfg.max_execution_gas_increase_percent {
-                if unified_pct > max_exec {
-                    failures.push(format!("Execution Gas increased by {:.1}% (limit: {:.1}%)", unified_pct, max_exec));
-                }
+            if let Some(max_exec) = diff_cfg.max_execution_gas_increase_percent
+                && unified_pct > max_exec
+            {
+                failures.push(format!(
+                    "Execution Gas increased by {:.1}% (limit: {:.1}%)",
+                    unified_pct, max_exec
+                ));
             }
-            if let Some(max_evm) = diff_cfg.max_evm_steps_increase {
-                if evm_delta > max_evm as f64 {
-                    failures.push(format!("EVM Steps increased by {:.0} (limit: {})", evm_delta, max_evm));
-                }
+            if let Some(max_evm) = diff_cfg.max_evm_steps_increase
+                && evm_delta > max_evm as f64
+            {
+                failures.push(format!(
+                    "EVM Steps increased by {:.0} (limit: {})",
+                    evm_delta, max_evm
+                ));
             }
-            if let Some(max_stylus) = diff_cfg.max_stylus_calls_increase {
-                if stylus_delta > max_stylus as f64 {
-                    failures.push(format!("Stylus Calls increased by {:.0} (limit: {})", stylus_delta, max_stylus));
-                }
+            if let Some(max_stylus) = diff_cfg.max_stylus_calls_increase
+                && stylus_delta > max_stylus as f64
+            {
+                failures.push(format!(
+                    "Stylus Calls increased by {:.0} (limit: {})",
+                    stylus_delta, max_stylus
+                ));
             }
         }
     }
@@ -897,7 +974,10 @@ async fn cmd_diff(
         }
         return Err(anyhow::anyhow!("Gas regression thresholds exceeded"));
     } else if threshold.is_some() || config_toml.is_some() {
-        println!("\n  {} Execution cost within acceptable limits.", "✅ [PASSED]".green().bold());
+        println!(
+            "\n  {} Execution cost within acceptable limits.",
+            "✅ [PASSED]".green().bold()
+        );
     }
 
     Ok(())
@@ -951,10 +1031,8 @@ async fn cmd_studio(
     );
 
     // 3. Open browser
-    if launch_browser {
-        if let Err(e) = open::that(&url) {
-            eprintln!("{} Could not open browser: {e}", "⚠".yellow());
-        }
+    if launch_browser && let Err(e) = open::that(&url) {
+        eprintln!("{} Could not open browser: {e}", "⚠".yellow());
     }
 
     // 4. Footer info
@@ -973,8 +1051,6 @@ async fn cmd_studio(
 }
 
 // ─── Banner & Rendering ───────────────────────────────────────────────────────
-
-
 
 fn print_banner() {
     eprintln!(
@@ -1000,8 +1076,8 @@ fn hostio_category_color(label: &str) -> &'static str {
         "storage_load_bytes32" | "storage_cache_bytes32" => "\x1b[33m",
         "native_keccak256" => "\x1b[35m",
         "read_args" | "write_result" | "pay_for_memory_grow" => "\x1b[32m",
-        "msg_sender" | "msg_value" | "msg_reentrant"
-        | "emit_log" | "account_balance" | "block_hash" => "\x1b[36m",
+        "msg_sender" | "msg_value" | "msg_reentrant" | "emit_log" | "account_balance"
+        | "block_hash" => "\x1b[36m",
         "call" | "static_call" | "delegate_call" | "create" => "\x1b[34m",
         _ => "\x1b[90m",
     }
@@ -1072,7 +1148,9 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     out += &format!(
         "  {:<34} {}\n",
         "TOTAL UNIFIED COST:".bold().cyan(),
-        format!("{:.2} gas", report.total_unified_cost).cyan().bold()
+        format!("{:.2} gas", report.total_unified_cost)
+            .cyan()
+            .bold()
     );
     out += &format!("{div}\n");
 
@@ -1138,7 +1216,11 @@ fn render_capture_summary(report: &StitchedReport) -> String {
         out += &format!("  {wide_div}\n");
         for (label, cost_gas) in aggregated.iter().take(10) {
             let cost_ink = (cost_gas * 10_000.0) as u64;
-            let pct = if total_ink_gas > 0.0 { cost_gas / total_ink_gas * 100.0 } else { 0.0 };
+            let pct = if total_ink_gas > 0.0 {
+                cost_gas / total_ink_gas * 100.0
+            } else {
+                0.0
+            };
             let color = hostio_category_color(label);
             let gas_str = format!("{:.0}", cost_gas);
             out += &format!(
@@ -1152,7 +1234,11 @@ fn render_capture_summary(report: &StitchedReport) -> String {
         out += &format!("\n  {}\n", "📊 SIMPLIFIED FLAMEGRAPH".bold());
         out += "  root ██████████████████████████████████████████████████ 100%\n";
         for (label, cost_gas) in aggregated.iter().take(5) {
-            let pct = if total_ink_gas > 0.0 { cost_gas / total_ink_gas * 100.0 } else { 0.0 };
+            let pct = if total_ink_gas > 0.0 {
+                cost_gas / total_ink_gas * 100.0
+            } else {
+                0.0
+            };
             let bar_width = (pct / 2.0) as usize;
             let bar = "█".repeat(bar_width);
             let color = hostio_category_color(label);
@@ -1172,7 +1258,11 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     out
 }
 
-fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedReport, top_selector: Option<&str>) {
+fn print_aave_report(
+    aave: &atupa_aave::LiquidationReport,
+    nitro: &StitchedReport,
+    top_selector: Option<&str>,
+) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  AAVE v3 PROTOCOL AUDIT".bold().underline());
     println!("{div}");
@@ -1181,7 +1271,11 @@ fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedRepor
     if let Some(sel) = top_selector {
         let fn_name = atupa_aave::AaveV3Adapter::resolve_selector_label(sel)
             .unwrap_or_else(|| format!("unknown ({})", sel));
-        println!("  {:<34} {}", "Top-Level Call:".bold(), fn_name.yellow().bold());
+        println!(
+            "  {:<34} {}",
+            "Top-Level Call:".bold(),
+            fn_name.yellow().bold()
+        );
     }
 
     let rows: &[(&str, String)] = &[
@@ -1232,7 +1326,11 @@ fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedRepor
     println!("{div}");
 }
 
-fn print_lido_report(lido: &atupa_lido::LidoReport, nitro: &StitchedReport, top_selector: Option<&str>) {
+fn print_lido_report(
+    lido: &atupa_lido::LidoReport,
+    nitro: &StitchedReport,
+    top_selector: Option<&str>,
+) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  LIDO stETH PROTOCOL AUDIT".bold().underline());
     println!("{div}");
@@ -1241,7 +1339,11 @@ fn print_lido_report(lido: &atupa_lido::LidoReport, nitro: &StitchedReport, top_
     if let Some(sel) = top_selector {
         let fn_name = atupa_lido::LidoAdapter::resolve_selector_label(sel)
             .unwrap_or_else(|| format!("unknown fn ({})", sel));
-        println!("  {:<34} {}", "Top-Level Call:".bold(), fn_name.yellow().bold());
+        println!(
+            "  {:<34} {}",
+            "Top-Level Call:".bold(),
+            fn_name.yellow().bold()
+        );
     }
 
     let rows: &[(&str, String)] = &[
@@ -1363,7 +1465,10 @@ fn get_network_name(chain_id: u64) -> String {
 
 fn resolve_artifact_path(path: Option<String>, category: &str, tx_hash: &str, ext: &str) -> String {
     let filename = path.unwrap_or_else(|| {
-        let short = tx_hash.trim_start_matches("0x").get(..10).unwrap_or(tx_hash);
+        let short = tx_hash
+            .trim_start_matches("0x")
+            .get(..10)
+            .unwrap_or(tx_hash);
         match ext {
             "json" => format!("report_{short}.json"),
             "svg" => format!("profile_{short}.svg"),
@@ -1373,7 +1478,11 @@ fn resolve_artifact_path(path: Option<String>, category: &str, tx_hash: &str, ex
 
     let pb = std::path::PathBuf::from(&filename);
     // If it's a simple filename (no parent directory), move it to artifacts/<category>/
-    if pb.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
+    if pb
+        .parent()
+        .map(|p| p.as_os_str().is_empty())
+        .unwrap_or(true)
+    {
         let dir = format!("artifacts/{}", category);
         let _ = std::fs::create_dir_all(&dir);
         format!("{}/{}", dir, filename)
@@ -1381,4 +1490,3 @@ fn resolve_artifact_path(path: Option<String>, category: &str, tx_hash: &str, ex
         filename
     }
 }
-

@@ -1,10 +1,10 @@
+use atupa_core::GasCategory;
+use atupa_core::VmKind as CoreVmKind;
 use atupa_rpc::{EthClient, RawStructLog, RpcError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use thiserror::Error;
-use atupa_core::GasCategory;
-use atupa_core::VmKind as CoreVmKind;
 
 // ─── Error Type ──────────────────────────────────────────────────────────────
 
@@ -109,8 +109,7 @@ impl UnifiedStep {
     /// Converts a unified step back to a core TraceStep, preserving VM identity and depth.
     pub fn to_trace_step(&self) -> atupa_core::TraceStep {
         if let Some(evm) = &self.evm {
-            let reverted =
-                evm.error.is_some() || evm.op == "REVERT" || evm.op == "INVALID";
+            let reverted = evm.error.is_some() || evm.op == "REVERT" || evm.op == "INVALID";
             atupa_core::TraceStep {
                 pc: evm.pc,
                 op: evm.op.clone(),
@@ -265,16 +264,15 @@ impl MixedTraceStitcher {
 
             // Extract target address for CALL/CREATE
             let mut target_address = None;
-            if log.op.contains("CALL") || log.op.contains("CREATE") {
-                if let Some(stack) = &log.stack {
-                    if stack.len() >= 2 {
-                        let hex_addr = &stack[stack.len() - 2];
-                        let clean_hex = hex_addr.trim_start_matches("0x");
-                        let padded = format!("{:0>40}", clean_hex);
-                        let extracted = &padded[padded.len() - 40..];
-                        target_address = Some(format!("0x{}", extracted.to_lowercase()));
-                    }
-                }
+            if (log.op.contains("CALL") || log.op.contains("CREATE"))
+                && let Some(stack) = &log.stack
+                && stack.len() >= 2
+            {
+                let hex_addr = &stack[stack.len() - 2];
+                let clean_hex = hex_addr.trim_start_matches("0x");
+                let padded = format!("{:0>40}", clean_hex);
+                let extracted = &padded[padded.len() - 40..];
+                target_address = Some(format!("0x{}", extracted.to_lowercase()));
             }
 
             steps.push(UnifiedStep {
@@ -284,7 +282,7 @@ impl MixedTraceStitcher {
                 gas_cost,
                 cost_equiv: gas_cost as f64,
                 depth,
-                is_vm_boundary: false, 
+                is_vm_boundary: false,
                 category,
                 target_address,
                 evm: Some(log),
@@ -341,7 +339,7 @@ impl MixedTraceStitcher {
             if window_host_io_count > 0 {
                 vm_boundary_count += 1;
                 steps[call_step_index].is_vm_boundary = true;
-                // Boundaries are often categorized as 'Call', but the specific CALL that triggered 
+                // Boundaries are often categorized as 'Call', but the specific CALL that triggered
                 // it is already categorized above.
             }
         }
@@ -456,7 +454,7 @@ impl NitroClient {
     /// will contain only EVM steps with `total_stylus_ink = 0`.
     pub async fn trace_transaction(&self, tx_hash: &str) -> Result<StitchedReport, NitroError> {
         let chain_id = self.base_client.get_chain_id().await.unwrap_or(0);
-        
+
         let is_nitro = match chain_id {
             // Known Arbitrum / Nitro chains
             42161 | 42170 | 421611 | 421613 | 421614 | 23011913 => true,
@@ -468,7 +466,12 @@ impl NitroClient {
             _ => true,
         };
 
-        log::info!("atupa-nitro: fetching trace for {} (chain_id: {}, nitro_aware: {})", tx_hash, chain_id, is_nitro);
+        log::info!(
+            "atupa-nitro: fetching trace for {} (chain_id: {}, nitro_aware: {})",
+            tx_hash,
+            chain_id,
+            is_nitro
+        );
 
         let (evm_result, stylus_result) = if is_nitro {
             tokio::join!(
@@ -476,7 +479,10 @@ impl NitroClient {
                 self.get_stylus_trace(tx_hash),
             )
         } else {
-            (self.base_client.get_transaction_trace(tx_hash).await, Ok(Vec::new()))
+            (
+                self.base_client.get_transaction_trace(tx_hash).await,
+                Ok(Vec::new()),
+            )
         };
 
         let evm_trace = evm_result?;
@@ -489,7 +495,8 @@ impl NitroClient {
             Vec::new()
         });
 
-        let report = MixedTraceStitcher::stitch(tx_hash, chain_id, evm_trace.struct_logs, stylus_trace);
+        let report =
+            MixedTraceStitcher::stitch(tx_hash, chain_id, evm_trace.struct_logs, stylus_trace);
 
         log::info!(
             "atupa-nitro: {} steps stitched | network: {} | EVM gas: {} | Stylus ink: {} ({:.2} gas-equiv) | boundaries: {}",
@@ -592,7 +599,7 @@ mod tests {
         assert_eq!(report.steps[1].category, GasCategory::Execution);
         assert_eq!(report.steps[3].label, "user_entrypoint");
         assert_eq!(report.steps[3].category, GasCategory::Execution);
-        
+
         // Category costs check
         assert!(report.category_costs.get(&GasCategory::Call).unwrap() > &0.0);
         assert!(report.category_costs.get(&GasCategory::Execution).unwrap() > &0.0);
@@ -649,11 +656,11 @@ mod tests {
         // Address is at len-2.
         let mut log = evm("CALL", 100, 1);
         log.stack = Some(vec![
-            "0x0".into(), // retLength
-            "0x0".into(), // retOffset
-            "0x4".into(), // argsLength
+            "0x0".into(),                                                                // retLength
+            "0x0".into(),  // retOffset
+            "0x4".into(),  // argsLength
             "0x20".into(), // argsOffset
-            "0x0".into(), // value
+            "0x0".into(),  // value
             "0x00000000000000000000000071C7656EC7ab88b098defB751B7401B5f6d8976F".into(), // address
             "0x1000".into(), // gas
         ]);

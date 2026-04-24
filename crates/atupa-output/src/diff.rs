@@ -20,43 +20,56 @@ pub fn generate_diff_flamegraph(
     let mut merged: HashMap<String, DiffEntry> = HashMap::new();
 
     for s in baseline_stacks {
-        merged.insert(s.stack.clone(), DiffEntry {
-            stack: s.stack.clone(),
-            depth: s.depth,
-            vm_kind: s.vm_kind.clone(),
-            baseline_weight: s.weight,
-            target_weight: 0,
-            resolved_label: s.resolved_label.clone(),
-            target_address: s.target_address.clone(),
-            reverted: s.reverted,
-        });
+        merged.insert(
+            s.stack.clone(),
+            DiffEntry {
+                stack: s.stack.clone(),
+                depth: s.depth,
+                vm_kind: s.vm_kind.clone(),
+                baseline_weight: s.weight,
+                target_weight: 0,
+                resolved_label: s.resolved_label.clone(),
+                target_address: s.target_address.clone(),
+                reverted: s.reverted,
+            },
+        );
     }
 
     for s in target_stacks {
         if let Some(entry) = merged.get_mut(&s.stack) {
             entry.target_weight += s.weight;
         } else {
-            merged.insert(s.stack.clone(), DiffEntry {
-                stack: s.stack.clone(),
-                depth: s.depth,
-                vm_kind: s.vm_kind.clone(),
-                baseline_weight: 0,
-                target_weight: s.weight,
-                resolved_label: s.resolved_label.clone(),
-                target_address: s.target_address.clone(),
-                reverted: s.reverted,
-            });
+            merged.insert(
+                s.stack.clone(),
+                DiffEntry {
+                    stack: s.stack.clone(),
+                    depth: s.depth,
+                    vm_kind: s.vm_kind.clone(),
+                    baseline_weight: 0,
+                    target_weight: s.weight,
+                    resolved_label: s.resolved_label.clone(),
+                    target_address: s.target_address.clone(),
+                    reverted: s.reverted,
+                },
+            );
         }
     }
 
     let entries: Vec<&DiffEntry> = merged.values().collect();
-    if entries.is_empty() || entries.iter().all(|e| e.baseline_weight == 0 && e.target_weight == 0) {
-        return Ok("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 60\" \
+    if entries.is_empty()
+        || entries
+            .iter()
+            .all(|e| e.baseline_weight == 0 && e.target_weight == 0)
+    {
+        return Ok(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 60\" \
                    style=\"background-color:#0d1117\">\
                    <text x=\"14\" y=\"34\" fill=\"#94a3b8\" \
                    font-family=\"Inter,monospace\" font-size=\"13\">\
                    No execution data found for diff.\
-                   </text></svg>".to_string());
+                   </text></svg>"
+                .to_string(),
+        );
     }
 
     const SVG_W: f64 = 1000.0;
@@ -68,8 +81,14 @@ pub fn generate_diff_flamegraph(
     const SEPARATOR_H: f64 = 28.0;
     const MIN_BAR_PX: f64 = 2.0;
 
-    let evm_entries: Vec<&&DiffEntry> = entries.iter().filter(|e| e.vm_kind == VmKind::Evm).collect();
-    let mut wasm_entries: Vec<&&DiffEntry> = entries.iter().filter(|e| e.vm_kind == VmKind::Stylus).collect();
+    let evm_entries: Vec<&&DiffEntry> = entries
+        .iter()
+        .filter(|e| e.vm_kind == VmKind::Evm)
+        .collect();
+    let mut wasm_entries: Vec<&&DiffEntry> = entries
+        .iter()
+        .filter(|e| e.vm_kind == VmKind::Stylus)
+        .collect();
     let has_wasm = !wasm_entries.is_empty();
 
     let mut depths: Vec<u16> = evm_entries.iter().map(|e| e.depth).collect();
@@ -83,11 +102,15 @@ pub fn generate_diff_flamegraph(
 
     // ── EVM lanes ─────────────────────────────────────────────────────────────
     for depth in &depths {
-        let mut lane_entries: Vec<&&&DiffEntry> = evm_entries.iter().filter(|e| e.depth == *depth).collect();
+        let mut lane_entries: Vec<&&&DiffEntry> =
+            evm_entries.iter().filter(|e| e.depth == *depth).collect();
         // Sort by stack string to maintain deterministic left-to-right ordering
         lane_entries.sort_by(|a, b| a.stack.cmp(&b.stack));
 
-        let lane_weight: u64 = lane_entries.iter().map(|e| std::cmp::max(e.baseline_weight, e.target_weight)).sum();
+        let lane_weight: u64 = lane_entries
+            .iter()
+            .map(|e| std::cmp::max(e.baseline_weight, e.target_weight))
+            .sum();
         if lane_weight == 0 {
             continue;
         }
@@ -112,7 +135,7 @@ pub fn generate_diff_flamegraph(
     // ── WASM lanes ────────────────────────────────────────────────────────────
     if has_wasm {
         current_y += SEPARATOR_H;
-        
+
         // Draw separator
         body.push_str(&format!(
             r##"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#334155" stroke-width="1" stroke-dasharray="4"/>"##,
@@ -123,7 +146,10 @@ pub fn generate_diff_flamegraph(
             SVG_W / 2.0, current_y - 10.0
         ));
 
-        let global_wasm_weight: u64 = wasm_entries.iter().map(|e| std::cmp::max(e.baseline_weight, e.target_weight)).sum();
+        let global_wasm_weight: u64 = wasm_entries
+            .iter()
+            .map(|e| std::cmp::max(e.baseline_weight, e.target_weight))
+            .sum();
         wasm_entries.sort_by(|a, b| a.stack.cmp(&b.stack));
 
         let mut bar_x = PAD_L;
@@ -198,21 +224,29 @@ pub fn generate_diff_flamegraph(
 fn render_diff_bar(out: &mut String, entry: &DiffEntry, x: f64, y: f64, w: f64, h: f64) {
     let baseline = entry.baseline_weight;
     let target = entry.target_weight;
-    
+
     let class = get_diff_class(baseline, target);
     let tooltip = format_diff_tooltip(entry);
-    
+
     out.push_str(&format!(
         r##"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" rx="4" class="{}">"##,
         x, y, w, h, class
     ));
     out.push_str(&format!(r##"<title>{}</title></rect>"##, tooltip));
 
-    let display_name = get_truncated_name(&entry.stack, &entry.resolved_label, &entry.target_address, w, target);
+    let display_name = get_truncated_name(
+        &entry.stack,
+        &entry.resolved_label,
+        &entry.target_address,
+        w,
+        target,
+    );
     if !display_name.is_empty() {
         out.push_str(&format!(
             r##"<text x="{:.2}" y="{:.2}" class="label">{}</text>"##,
-            x + 6.0, y + 13.0, display_name
+            x + 6.0,
+            y + 13.0,
+            display_name
         ));
     }
 }
@@ -222,11 +256,11 @@ fn get_diff_class(baseline: u64, target: u64) -> &'static str {
         return "box-stable";
     }
     if baseline == 0 {
-        return "box-regress"; 
-    } 
+        return "box-regress";
+    }
     if target == 0 {
-        return "box-improve"; 
-    } 
+        return "box-improve";
+    }
 
     let change = (target as f64 - baseline as f64) / baseline as f64;
 
@@ -245,7 +279,11 @@ fn format_diff_tooltip(entry: &DiffEntry) -> String {
     let leaf = entry.stack.split(';').next_back().unwrap_or(&entry.stack);
 
     let prefix = if entry.reverted { "REVERTED — " } else { "" };
-    let vm = if entry.vm_kind == VmKind::Evm { "EVM" } else { "Stylus" };
+    let vm = if entry.vm_kind == VmKind::Evm {
+        "EVM"
+    } else {
+        "Stylus"
+    };
 
     if baseline == 0 {
         return format!("{}{} [{}] | NEW: {} gas", prefix, leaf, vm, target);
@@ -263,7 +301,13 @@ fn format_diff_tooltip(entry: &DiffEntry) -> String {
     )
 }
 
-fn get_truncated_name(stack: &str, resolved: &Option<String>, addr: &Option<String>, w: f64, weight: u64) -> String {
+fn get_truncated_name(
+    stack: &str,
+    resolved: &Option<String>,
+    addr: &Option<String>,
+    w: f64,
+    weight: u64,
+) -> String {
     let leaf = stack.split(';').next_back().unwrap_or(stack);
     let base = if let Some(r) = resolved {
         r.clone()
@@ -273,7 +317,7 @@ fn get_truncated_name(stack: &str, resolved: &Option<String>, addr: &Option<Stri
         format!("{} ({} gas)", leaf, weight)
     };
 
-    let max_chars = ((w - 12.0) / 7.0) as usize; 
+    let max_chars = ((w - 12.0) / 7.0) as usize;
     if max_chars < 3 {
         return String::new();
     }
@@ -297,11 +341,15 @@ fn render_diff_legend(out: &mut String, y: f64) {
         let x = start_x + (i as f64 * 220.0);
         out.push_str(&format!(
             r##"<rect x="{}" y="{}" width="12" height="12" rx="2" class="{}"/>"##,
-            x, y - 6.0, class
+            x,
+            y - 6.0,
+            class
         ));
         out.push_str(&format!(
             r##"<text x="{}" y="{}" class="legend">{}</text>"##,
-            x + 18.0, y, label
+            x + 18.0,
+            y,
+            label
         ));
     }
 }

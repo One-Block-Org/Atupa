@@ -26,10 +26,19 @@ const LIDO_SELECTORS: &[(&str, &str)] = &[
 
 /// Known Lido protocol contract addresses (Mainnet).
 const LIDO_ADDRESSES: &[(&str, &str)] = &[
-    ("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84", "stETH (Lido Core)"),
-    ("0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5", "NodeOperatorsRegistry"),
+    (
+        "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+        "stETH (Lido Core)",
+    ),
+    (
+        "0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5",
+        "NodeOperatorsRegistry",
+    ),
     ("0x442af752419395f27ed54A848524a30028962bb2", "LidoOracle"),
-    ("0x889edC2Bf57978ed079b851D273218ee42a2b349", "WithdrawalQueue"),
+    (
+        "0x889edC2Bf57978ed079b851D273218ee42a2b349",
+        "WithdrawalQueue",
+    ),
     ("0x852f970761d74367f33B6C2e309a29D681E2F16a", "LegacyOracle"),
     ("0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0", "wstETH"),
 ];
@@ -149,8 +158,12 @@ impl LidoDeepTracer {
                 "SSTORE" => storage_writes += 1,
                 "CALL" | "STATICCALL" | "DELEGATECALL" | "CALLCODE" => {
                     external_calls += 1;
-                    
-                    let selector = step.stack.as_ref().and_then(|s| s.last()).map(|s| s.as_str());
+
+                    let selector = step
+                        .stack
+                        .as_ref()
+                        .and_then(|s| s.last())
+                        .map(|s| s.as_str());
 
                     if let Some(label) = self.adapter.resolve_label(None, selector) {
                         if label.contains("transferShares") {
@@ -207,16 +220,62 @@ impl LidoDeepTracer {
         let base = self.analyze_staking(base_tx, base_steps)?;
         let target = self.analyze_staking(target_tx, target_steps)?;
 
-        let mut rows = Vec::new();
-        rows.push(DiffRow::new("Total Gas", base.total_gas as f64, target.total_gas as f64, true));
-        rows.push(DiffRow::new("Storage Reads", base.storage_reads as f64, target.storage_reads as f64, true));
-        rows.push(DiffRow::new("Storage Writes", base.storage_writes as f64, target.storage_writes as f64, true));
-        rows.push(DiffRow::new("External Calls", base.external_calls as f64, target.external_calls as f64, true));
-        rows.push(DiffRow::new("Shares Transfers", base.shares_transfers as f64, target.shares_transfers as f64, true));
-        rows.push(DiffRow::new("Oracle Reports", base.oracle_reports as f64, target.oracle_reports as f64, true));
-        rows.push(DiffRow::new("Withdrawal Requests", base.withdrawal_requests as f64, target.withdrawal_requests as f64, true));
-        rows.push(DiffRow::new("Withdrawal Claims", base.withdrawal_claims as f64, target.withdrawal_claims as f64, true));
-        rows.push(DiffRow::new("Wrapped Ops", base.wrapped_ops as f64, target.wrapped_ops as f64, true));
+        let rows = vec![
+            DiffRow::new(
+                "Total Gas",
+                base.total_gas as f64,
+                target.total_gas as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Reads",
+                base.storage_reads as f64,
+                target.storage_reads as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Writes",
+                base.storage_writes as f64,
+                target.storage_writes as f64,
+                true,
+            ),
+            DiffRow::new(
+                "External Calls",
+                base.external_calls as f64,
+                target.external_calls as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Shares Transfers",
+                base.shares_transfers as f64,
+                target.shares_transfers as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Oracle Reports",
+                base.oracle_reports as f64,
+                target.oracle_reports as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Withdrawal Requests",
+                base.withdrawal_requests as f64,
+                target.withdrawal_requests as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Withdrawal Claims",
+                base.withdrawal_claims as f64,
+                target.withdrawal_claims as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Wrapped Ops",
+                base.wrapped_ops as f64,
+                target.wrapped_ops as f64,
+                true,
+            ),
+        ];
 
         Ok(ProtocolDiffReport {
             protocol: "Lido stETH".to_string(),

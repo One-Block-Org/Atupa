@@ -176,9 +176,7 @@ impl EthClient {
             .ok()?;
 
         let rpc_res: serde_json::Value = response.json().await.ok()?;
-        rpc_res["result"]["input"]
-            .as_str()
-            .map(|s| s.to_string())
+        rpc_res["result"]["input"].as_str().map(|s| s.to_string())
     }
 
     /// Extract the 4-byte function selector from raw calldata.
@@ -191,4 +189,3 @@ impl EthClient {
         Some(format!("0x{}", &stripped[..8].to_lowercase()))
     }
 }
-
