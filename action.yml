@@ -156,6 +156,7 @@ runs:
     # 4. Post sticky PR comment (updates in-place on every new push to PR)
     - name: Post Sticky PR Comment
       if: inputs.post_comment == 'true' && github.event_name == 'pull_request' && always()
+      continue-on-error: true
       uses: marocchino/sticky-pull-request-comment@v2
       with:
         header: atupa-gas-diff
