@@ -7,15 +7,13 @@
 //! ```text
 //! atupa profile  --tx <HASH> [--rpc <URL>] [--out trace.svg] [--demo]
 //! atupa capture  --tx <HASH> [--rpc <URL>] [--output summary|json|metric] [--file report.json]
+//!               [--profile] [--etherscan-key <KEY>] [--studio]
 //! atupa audit    --tx <HASH> [--rpc <URL>] [--protocol aave|lido]
 //! atupa diff     --base <HASH> --target <HASH> [--rpc <URL>]
 //! ```
 //!
-//! Can also be invoked as a `cargo` subcommand:
-//!
-//! ```text
-//! cargo atupa profile --tx <HASH>
-//! ```
+//! ## Standalone Usage
+//! Atupa is designed to be used as a standalone CLI tool.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -25,10 +23,19 @@ use std::time::Duration;
 
 use atupa_aave::AaveDeepTracer;
 use atupa_core::TraceStep;
+use atupa_core::config::AtupaConfig;
 use atupa_lido::LidoDeepTracer;
 use atupa_nitro::{NitroClient, StitchedReport, VmKind};
-use atupa_rpc::RawStructLog;
+use atupa_output::SvgGenerator;
+use atupa_parser::Parser as TraceParser;
+use atupa_parser::aggregator::Aggregator;
+use atupa_rpc::{EthClient, RawStructLog};
 
+mod init;
+mod studio;
+mod thresholds;
+
+use thresholds::AtupaConfigToml;
 // ─── CLI Definition ────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -44,14 +51,8 @@ SOURCE: https://github.com/One-Block-Org/Atupa",
 )]
 struct Cli {
     /// Arbitrum / Ethereum RPC endpoint (or set ATUPA_RPC_URL)
-    #[arg(
-        short,
-        long,
-        global = true,
-        env = "ATUPA_RPC_URL",
-        default_value = "http://localhost:8547"
-    )]
-    rpc: String,
+    #[arg(short, long, global = true, value_name = "URL")]
+    rpc: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -74,23 +75,38 @@ enum Commands {
         out: Option<String>,
 
         /// Etherscan API key for contract name resolution
-        #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+        #[arg(long, value_name = "KEY")]
         etherscan_key: Option<String>,
     },
 
-    /// Capture a unified EVM + Stylus execution trace (Arbitrum Nitro)
+    /// Capture a unified EVM + Stylus execution trace (Arbitrum Nitro).
+    ///
+    /// Add --profile to also generate an SVG flamegraph from the same RPC call.
+    /// Add --studio  to automatically launch Atupa Studio with the report loaded.
     Capture {
         /// Transaction hash to profile (0x-prefixed)
         #[arg(short, long, value_name = "TX_HASH")]
         tx: String,
 
-        /// Output format
+        /// Output format for the JSON/summary report
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Summary)]
         output: OutputFormat,
 
-        /// Write output to a file (e.g. --file report.json)
+        /// Write report to a file instead of stdout
         #[arg(short = 'f', long, value_name = "FILE")]
         file: Option<String>,
+
+        /// Also generate an SVG flamegraph (reuses the same RPC trace)
+        #[arg(long, default_value_t = false)]
+        profile: bool,
+
+        /// Etherscan API key for contract name resolution
+        #[arg(long, value_name = "KEY")]
+        etherscan_key: Option<String>,
+
+        /// Launch Atupa Studio after capture and open it in the browser
+        #[arg(long, default_value_t = false)]
+        studio: bool,
     },
 
     /// Protocol-aware execution auditing (Aave v3/GHO, Lido)
@@ -113,6 +129,30 @@ enum Commands {
         /// Target transaction hash (0x-prefixed)
         #[arg(short, long, value_name = "TARGET_TX")]
         target: String,
+
+        /// Simple mode override: Fail CI if gas increases by > X%
+        #[arg(long, value_name = "PERCENT")]
+        threshold: Option<f64>,
+
+        /// Path to atupa.toml (defaults to looking in CWD)
+        #[arg(long, value_name = "FILE")]
+        config: Option<String>,
+
+        /// Generate artifacts/diff/report.md for GitHub PRs
+        #[arg(long, default_value_t = false)]
+        markdown: bool,
+
+        /// Generate visual diff flamegraph in artifacts/diff/
+        #[arg(long, default_value_t = false)]
+        svg: bool,
+
+        /// Output format (summary | json | markdown)
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Summary)]
+        output: OutputFormat,
+
+        /// Optional: Run DeepTracer on both and diff heuristics
+        #[arg(short, long, value_enum)]
+        protocol: Option<Protocol>,
     },
 
     /// Launch Atupa Studio — the local web visualizer for trace reports
@@ -122,16 +162,26 @@ enum Commands {
         port: u16,
 
         /// Path to the studio directory (overrides auto-detection)
-        #[arg(long, env = "ATUPA_STUDIO_DIR", value_name = "DIR")]
+        #[arg(long, value_name = "DIR")]
         dir: Option<String>,
 
         /// Open the browser automatically after the server starts
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         open: bool,
     },
+
+    /// Scaffold Atupa config, GitHub Actions workflow, and a profile script
+    ///
+    /// Run this once in a new repository to get started.
+    /// Detects Foundry, Hardhat, or Stylus projects automatically.
+    Init {
+        /// Overwrite existing files
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
-#[derive(Clone, ValueEnum, Debug)]
+#[derive(Clone, ValueEnum, Debug, PartialEq, Eq)]
 enum OutputFormat {
     /// Human-readable terminal summary (default)
     Summary,
@@ -153,18 +203,7 @@ enum Protocol {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Support `cargo atupa <cmd>` by stripping the extra "atupa" argv[1] that
-    // cargo inserts when it dispatches to a cargo-<name> subcommand binary.
-    let raw: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    let args = if raw.get(1).and_then(|s| s.to_str()) == Some("atupa") {
-        raw.into_iter()
-            .enumerate()
-            .filter(|(i, _)| *i != 1)
-            .map(|(_, a)| a)
-            .collect::<Vec<_>>()
-    } else {
-        raw
-    };
+    let args = std::env::args_os();
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
@@ -172,6 +211,11 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse_from(args);
+    let mut config = AtupaConfig::load();
+
+    if let Some(r) = cli.rpc {
+        config.rpc_url = r;
+    }
 
     print_banner();
 
@@ -182,19 +226,63 @@ async fn main() -> Result<()> {
             out,
             etherscan_key,
         } => {
-            cmd_profile(&cli.rpc, &tx, demo, out, etherscan_key).await?;
+            if let Some(key) = etherscan_key {
+                config.etherscan_key = Some(key);
+            }
+            cmd_profile(&config, &tx, demo, out).await?;
         }
-        Commands::Capture { tx, output, file } => {
-            cmd_capture(&cli.rpc, &tx, output, file).await?;
+        Commands::Capture {
+            tx,
+            output,
+            file,
+            profile,
+            etherscan_key,
+            studio,
+        } => {
+            if let Some(key) = etherscan_key {
+                config.etherscan_key = Some(key);
+            }
+            let report_path = cmd_capture(&config, &tx, output, file, profile).await?;
+            if studio {
+                // Pass the generated report path to Studio for auto-load
+                cmd_studio(&config, config.studio_port, true, report_path).await?;
+            }
         }
         Commands::Audit { tx, protocol } => {
-            cmd_audit(&cli.rpc, &tx, protocol).await?;
+            cmd_audit(&config, &tx, protocol).await?;
         }
-        Commands::Diff { base, target } => {
-            cmd_diff(&cli.rpc, &base, &target).await?;
+        Commands::Diff {
+            base,
+            target,
+            threshold,
+            config: diff_config,
+            markdown,
+            svg,
+            protocol,
+            output,
+        } => {
+            cmd_diff(
+                &config,
+                &base,
+                &target,
+                threshold,
+                diff_config,
+                markdown,
+                svg,
+                output,
+                protocol,
+            )
+            .await?;
         }
         Commands::Studio { port, dir, open } => {
-            cmd_studio(port, dir, open).await?;
+            if let Some(d) = dir {
+                config.studio_dir = Some(std::path::PathBuf::from(d));
+            }
+            config.studio_port = port;
+            cmd_studio(&config, port, open, None).await?;
+        }
+        Commands::Init { force } => {
+            init::execute_init(init::InitArgs { force })?;
         }
     }
 
@@ -204,11 +292,10 @@ async fn main() -> Result<()> {
 // ─── Profile Command ──────────────────────────────────────────────────────────
 
 async fn cmd_profile(
-    rpc: &str,
+    config: &AtupaConfig,
     tx: &str,
     demo: bool,
     out: Option<String>,
-    etherscan_key: Option<String>,
 ) -> Result<()> {
     if !demo && tx.is_empty() {
         anyhow::bail!(
@@ -219,71 +306,185 @@ async fn cmd_profile(
 
     let display = if demo { "demo" } else { tx };
     eprintln!("{} {}", "→ Profiling:".bold(), display.cyan());
-    eprintln!("{} {}\n", "→ Endpoint: ".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint: ".bold(), config.rpc_url.dimmed());
 
-    atupa::execute_profile(tx, rpc, demo, out, etherscan_key)
-        .await
-        .context("Profile command failed")
+    // Route output through the standard artifacts directory (same as capture)
+    let svg_path = resolve_artifact_path(out, "profile", tx, "svg");
+
+    let (out_path, network) = atupa::execute_profile(
+        tx,
+        &config.rpc_url,
+        demo,
+        Some(svg_path),
+        config.etherscan_key.clone(),
+    )
+    .await
+    .context("Profile command failed")?;
+
+    eprintln!();
+    eprintln!(
+        "  {} ({})",
+        "PROFILE COMPLETE".bold().underline(),
+        network.cyan()
+    );
+    let div = "─".repeat(40).dimmed().to_string();
+    eprintln!("{div}");
+    eprintln!(
+        "  {:<24} {}",
+        "SVG saved to:".bold(),
+        out_path.green().bold()
+    );
+    eprintln!("{div}");
+    Ok(())
 }
 
 // ─── Capture Command ──────────────────────────────────────────────────────────
 
 async fn cmd_capture(
-    rpc: &str,
+    config: &AtupaConfig,
     tx: &str,
     format: OutputFormat,
     file: Option<String>,
-) -> Result<()> {
+    generate_profile: bool,
+) -> Result<Option<String>> {
     let tx = normalise_hash(tx);
     eprintln!("{} {}", "→ Transaction:".bold(), tx.cyan());
-    eprintln!("{} {}\n", "→ Endpoint:   ".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:   ".bold(), config.rpc_url.dimmed());
 
     // Phase 1: fetch ──────────────────────────────────────────────────────────
-    let pb = spinner("Fetching dual-VM traces from Arbitrum Nitro…");
-    let client = NitroClient::new(rpc.to_string());
+    let pb = spinner("Detecting network and fetching execution trace…");
+    let client = NitroClient::new(config.rpc_url.clone());
 
-    let report = client
+    let mut report = client
         .trace_transaction(&tx)
         .await
-        .context("Failed to fetch trace — is the Arbitrum node running?")?;
+        .context("Failed to fetch trace — ensure the RPC endpoint is valid and accessible.")?;
 
+    let network_name = get_network_name(report.chain_id);
     pb.finish_with_message(format!(
-        "{} Fetched {} EVM steps + {} Stylus HostIOs",
+        "{} Captured trace from {} ({} EVM steps{} )",
         "✔".green().bold(),
+        network_name.cyan().bold(),
         evm_count(&report).to_string().green(),
-        report.stylus_steps().len().to_string().yellow(),
+        if report.total_stylus_ink > 0 {
+            format!(
+                " + {} Stylus HostIOs",
+                report.stylus_steps().len().to_string().yellow()
+            )
+        } else {
+            "".into()
+        }
     ));
 
-    // Phase 2: render ─────────────────────────────────────────────────────────
+    // Phase 1b: fetch receipt for on-chain gasUsed (non-fatal) ──────────────────
+    let eth_client = EthClient::new(config.rpc_url.clone());
+    report.on_chain_gas_used = eth_client.get_gas_used(&tx).await;
+
+    // Phase 1.5: resolve contract names ─────────────────────────────────────────
+    if let Some(key) = config.etherscan_key.clone() {
+        let pb_names = spinner("Resolving contract names via Etherscan…");
+        let resolver = atupa_rpc::etherscan::EtherscanResolver::new(Some(key), report.chain_id);
+
+        let mut addresses = std::collections::HashSet::new();
+        for step in &report.steps {
+            if let Some(evm) = &step.evm
+                && (evm.op.contains("CALL") || evm.op.contains("CREATE"))
+                && let Some(stack) = &evm.stack
+                && stack.len() >= 2
+            {
+                let hex_addr = &stack[stack.len() - 2];
+                let clean_hex = hex_addr.trim_start_matches("0x");
+                let padded = format!("{:0>40}", clean_hex);
+                let extracted = &padded[padded.len() - 40..];
+                addresses.insert(format!("0x{}", extracted));
+            }
+        }
+
+        for addr in addresses {
+            if let Some(name) = resolver.resolve_contract_name(&addr).await {
+                report.resolved_names.insert(addr, name);
+            }
+        }
+        pb_names.finish_with_message(format!(
+            "{} Resolved {} contract name(s) via Etherscan.",
+            "✔".green().bold(),
+            report.resolved_names.len().to_string().cyan().bold()
+        ));
+    }
+
+    // Phase 2: optional Flamegraph SVG (built from already-fetched report — no second RPC call) ──
+    let mut svg_path: Option<String> = None;
+    if generate_profile {
+        let pb_svg = spinner("Generating SVG flamegraph…");
+
+        // Convert report steps → collapsed stacks → SVG (zero extra RPC calls)
+        let trace_steps: Vec<atupa_core::TraceStep> =
+            report.steps.iter().map(|s| s.to_trace_step()).collect();
+        let normalized = TraceParser::normalize_raw(trace_steps);
+        let stacks = Aggregator::build_collapsed_stacks(&normalized);
+        let svg = SvgGenerator::generate_flamegraph(&stacks)
+            .context("SVG flamegraph generation failed")?;
+
+        let svg_suggestion = file.as_ref().map(|f| {
+            if f.ends_with(".json") {
+                f.trim_end_matches(".json").to_string() + ".svg"
+            } else {
+                f.to_string() + ".svg"
+            }
+        });
+        let svg_out = resolve_artifact_path(svg_suggestion, "capture", &tx, "svg");
+        std::fs::write(&svg_out, svg)
+            .with_context(|| format!("Failed to write SVG to '{svg_out}'"))?;
+
+        pb_svg.finish_with_message(format!(
+            "{} SVG saved → {}",
+            "✔".green().bold(),
+            svg_out.green().bold()
+        ));
+        svg_path = Some(svg_out);
+    }
+
+    // Phase 3: render report ──────────────────────────────────────────────────
     let pb2 = spinner("Rendering report…");
+    let summary_text = render_capture_summary(&report);
+
     let rendered = match format {
-        OutputFormat::Summary => render_capture_summary(&report),
+        OutputFormat::Summary => summary_text.clone(),
         OutputFormat::Json => serde_json::to_string_pretty(&report)?,
         OutputFormat::Metric => format!("{:.4}", report.total_unified_cost),
     };
     pb2.finish_with_message(format!("{} Report ready.", "✔".green().bold()));
 
     eprintln!();
+    println!("{}", summary_text);
+    eprintln!();
 
-    // Phase 3: output ─────────────────────────────────────────────────────────
-    if let Some(path) = file {
-        std::fs::write(&path, &rendered)
-            .with_context(|| format!("Failed to write report to '{path}'"))?;
+    // Phase 4: output ─────────────────────────────────────────────────────────
+    let report_path = resolve_artifact_path(file, "capture", &tx, "json");
+
+    std::fs::write(&report_path, &rendered)
+        .with_context(|| format!("Failed to write report to '{report_path}'"))?;
+
+    eprintln!(
+        "{} Report saved to {}",
+        "✔".green().bold(),
+        report_path.cyan().bold()
+    );
+
+    if let Some(ref svg) = svg_path {
         eprintln!(
-            "{} Report written to {}",
+            "{} SVG profile saved to {}",
             "✔".green().bold(),
-            path.cyan().bold()
+            svg.cyan().bold()
         );
-    } else {
-        println!("{}", rendered);
     }
 
-    Ok(())
+    Ok(Some(report_path))
 }
 
 // ─── Audit Command ────────────────────────────────────────────────────────────
 
-async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
+async fn cmd_audit(config: &AtupaConfig, tx: &str, protocol: Protocol) -> Result<()> {
     let tx = normalise_hash(tx);
     let label = match protocol {
         Protocol::Aave => "Aave v3 + GHO",
@@ -296,10 +497,18 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
         label.yellow().bold(),
         tx.cyan()
     );
-    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), config.rpc_url.dimmed());
+
+    let eth_client = EthClient::new(config.rpc_url.clone());
+    let client = NitroClient::new(config.rpc_url.clone());
+
+    // Fetch the top-level calldata selector (non-fatal) — gives us the real function being called
+    let top_level_selector = eth_client
+        .get_transaction_input(&tx)
+        .await
+        .and_then(|input| EthClient::selector_from_input(&input));
 
     let pb = spinner(&format!("Fetching trace for {label} audit…"));
-    let client = NitroClient::new(rpc.to_string());
 
     let report = client
         .trace_transaction(&tx)
@@ -331,7 +540,7 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
 
             pb2.finish_with_message(format!("{} Aave v3 adapter complete.", "✔".green().bold()));
             eprintln!();
-            print_aave_report(&liq, &report);
+            print_aave_report(&liq, &report, top_level_selector.as_deref());
         }
         Protocol::Lido => {
             let pb2 = spinner("Applying Lido stETH protocol adapter…");
@@ -354,7 +563,7 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
                 "✔".green().bold()
             ));
             eprintln!();
-            print_lido_report(&res, &report);
+            print_lido_report(&res, &report, top_level_selector.as_deref());
         }
     }
 
@@ -363,7 +572,19 @@ async fn cmd_audit(rpc: &str, tx: &str, protocol: Protocol) -> Result<()> {
 
 // ─── Diff Command ─────────────────────────────────────────────────────────────
 
-async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::collapsible_if)]
+async fn cmd_diff(
+    config: &AtupaConfig,
+    base: &str,
+    target: &str,
+    threshold: Option<f64>,
+    diff_config: Option<String>,
+    markdown: bool,
+    svg: bool,
+    output_format: OutputFormat,
+    protocol: Option<Protocol>,
+) -> Result<()> {
     let base = normalise_hash(base);
     let target = normalise_hash(target);
 
@@ -374,191 +595,473 @@ async fn cmd_diff(rpc: &str, base: &str, target: &str) -> Result<()> {
         "Target:".bold(),
         target.yellow()
     );
-    eprintln!("{} {}\n", "→ Endpoint:".bold(), rpc.dimmed());
+    eprintln!("{} {}\n", "→ Endpoint:".bold(), config.rpc_url.dimmed());
 
-    let client = NitroClient::new(rpc.to_string());
+    let client = NitroClient::new(config.rpc_url.clone());
+    let eth_client = EthClient::new(config.rpc_url.clone());
 
-    let pb = spinner("Fetching both traces concurrently…");
+    let pb = spinner("Fetching both traces and receipts concurrently…");
+
+    // Fetch traces
     let (base_report, target_report) = tokio::try_join!(
         client.trace_transaction(&base),
         client.trace_transaction(&target),
     )
     .context("Failed to fetch one or both traces")?;
-    pb.finish_with_message(format!("{} Both traces fetched.", "✔".green().bold()));
 
+    // Fetch receipts for actual gas used
+    let (base_receipt_gas, target_receipt_gas) = tokio::join!(
+        eth_client.get_gas_used(&base),
+        eth_client.get_gas_used(&target),
+    );
+
+    pb.finish_with_message(format!("{} Both traces fetched.", "✔".green().bold()));
     eprintln!();
 
-    // Cost delta
-    let base_cost = base_report.total_unified_cost;
-    let target_cost = target_report.total_unified_cost;
-    let delta = target_cost - base_cost;
-    let pct = if base_cost > 0.0 {
-        delta / base_cost * 100.0
+    // Cost deltas
+    let base_unified_cost = base_report.total_unified_cost;
+    let target_unified_cost = target_report.total_unified_cost;
+    let unified_delta = target_unified_cost - base_unified_cost;
+    let unified_pct = if base_unified_cost > 0.0 {
+        unified_delta / base_unified_cost * 100.0
     } else {
         0.0
     };
 
-    let div = "─".repeat(56).dimmed().to_string();
+    let base_total_gas = base_receipt_gas.unwrap_or(base_unified_cost as u64);
+    let target_total_gas = target_receipt_gas.unwrap_or(target_unified_cost as u64);
+    let total_gas_delta = target_total_gas as f64 - base_total_gas as f64;
+    let total_gas_pct = if base_total_gas > 0 {
+        total_gas_delta / base_total_gas as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let base_intrinsic = base_total_gas.saturating_sub(base_unified_cost as u64);
+    let target_intrinsic = target_total_gas.saturating_sub(target_unified_cost as u64);
+
+    let div = "─".repeat(70).dimmed().to_string();
+
     println!("{}", "  EXECUTION DIFF".bold().underline());
     println!("{div}");
+
+    // Print Table Header
     println!(
-        "  {:<30} {}",
-        "Base unified cost (gas):".bold(),
-        format!("{base_cost:.2}").green()
-    );
-    println!(
-        "  {:<30} {}",
-        "Target unified cost (gas):".bold(),
-        format!("{target_cost:.2}").yellow()
+        "  {:<25} {:<15} {:<15} {}",
+        "Metric".bold(),
+        "Base".bold(),
+        "Target".bold(),
+        "Delta".bold()
     );
     println!("{div}");
 
-    let sign = if delta >= 0.0 { "+" } else { "" };
-    let color = if delta > 0.0 {
-        format!("{sign}{delta:.2}").red().to_string()
-    } else if delta < 0.0 {
-        format!("{sign}{delta:.2}").green().to_string()
+    let colorize_delta = |delta: f64, pct: f64| -> String {
+        let sign = if delta >= 0.0 { "+" } else { "" };
+        if delta > 0.0 {
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .red()
+                .to_string()
+        } else if delta < 0.0 {
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .green()
+                .to_string()
+        } else {
+            format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+                .dimmed()
+                .to_string()
+        }
+    };
+
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "Total On-Chain Gas:",
+        base_total_gas.to_string().green(),
+        target_total_gas.to_string().yellow(),
+        colorize_delta(total_gas_delta, total_gas_pct)
+    );
+
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "↳ Execution Gas (EVM):",
+        base_unified_cost.to_string().cyan(),
+        target_unified_cost.to_string().cyan(),
+        colorize_delta(unified_delta, unified_pct)
+    );
+
+    let intrinsic_delta = target_intrinsic as f64 - base_intrinsic as f64;
+    let intrinsic_pct = if base_intrinsic > 0 {
+        intrinsic_delta / base_intrinsic as f64 * 100.0
     } else {
-        format!("{sign}{delta:.2}").dimmed().to_string()
+        0.0
     };
     println!(
-        "  {:<30} {} ({sign}{pct:.1}%)",
-        "Δ Unified Cost:".bold(),
-        color
+        "  {:<25} {:<15} {:<15} {}",
+        "↳ Intrinsic Gas:",
+        base_intrinsic.to_string().dimmed(),
+        target_intrinsic.to_string().dimmed(),
+        colorize_delta(intrinsic_delta, intrinsic_pct)
     );
+
     println!("{div}");
 
     // Step count comparison
     let base_evm = evm_count(&base_report);
     let tgt_evm = evm_count(&target_report);
+    let evm_delta = tgt_evm as f64 - base_evm as f64;
+    let evm_pct = if base_evm > 0 {
+        evm_delta / base_evm as f64 * 100.0
+    } else {
+        0.0
+    };
     println!(
-        "  {:<30} {} EVM | {} Stylus",
-        "Base steps:".bold(),
+        "  {:<25} {:<15} {:<15} {}",
+        "EVM Steps:",
         base_evm.to_string().green(),
-        base_report.stylus_steps().len().to_string().yellow()
+        tgt_evm.to_string().yellow(),
+        colorize_delta(evm_delta, evm_pct)
     );
+
+    let base_stylus = base_report.stylus_steps().len();
+    let tgt_stylus = target_report.stylus_steps().len();
+    let stylus_delta = tgt_stylus as f64 - base_stylus as f64;
+    let stylus_pct = if base_stylus > 0 {
+        stylus_delta / base_stylus as f64 * 100.0
+    } else {
+        0.0
+    };
     println!(
-        "  {:<30} {} EVM | {} Stylus",
-        "Target steps:".bold(),
-        tgt_evm.to_string().green(),
-        target_report.stylus_steps().len().to_string().yellow()
+        "  {:<25} {:<15} {:<15} {}",
+        "Stylus Cross-VM Calls:",
+        base_stylus.to_string().green(),
+        tgt_stylus.to_string().yellow(),
+        colorize_delta(stylus_delta, stylus_pct)
     );
     println!("{div}");
+
+    // ── Protocol Deep Diff (opt-in) ──────────────────────────────────────────
+    let mut proto_diff_rows: Vec<atupa_core::DiffRow> = Vec::new();
+    let mut proto_name = String::new();
+
+    if let Some(ref proto) = protocol {
+        let base_steps: Vec<TraceStep> = base_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
+        let target_steps: Vec<TraceStep> = target_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
+
+        let proto_report = match proto {
+            Protocol::Aave => {
+                let tracer = AaveDeepTracer::new();
+                tracer.diff_reports(&base, &base_steps, &target, &target_steps)
+            }
+            Protocol::Lido => {
+                let tracer = LidoDeepTracer::new();
+                tracer.diff_reports(&base, &base_steps, &target, &target_steps)
+            }
+        };
+
+        match proto_report {
+            Ok(report) => {
+                proto_name = report.protocol.clone();
+                let proto_div = "─".repeat(70).dimmed().to_string();
+                println!(
+                    "\n  {} DEEP DIFF",
+                    proto_name.to_uppercase().bold().underline()
+                );
+                println!("{proto_div}");
+                println!(
+                    "  {:<28} {:<15} {:<15} {}",
+                    "Metric".bold(),
+                    "Base".bold(),
+                    "Target".bold(),
+                    "Delta".bold()
+                );
+                println!("{proto_div}");
+
+                for row in &report.rows {
+                    let sign = if row.delta >= 0.0 { "+" } else { "" };
+                    let delta_str = format!("{sign}{:.0} ({sign}{:.1}%)", row.delta, row.pct);
+                    let delta_colored = if row.delta == 0.0 {
+                        delta_str.dimmed().to_string()
+                    } else if (row.delta > 0.0) == row.higher_is_worse {
+                        delta_str.red().to_string() // bad change
+                    } else {
+                        delta_str.green().to_string() // good change
+                    };
+                    println!(
+                        "  {:<28} {:<15} {:<15} {}",
+                        row.metric,
+                        row.base.to_string().dimmed(),
+                        row.target.to_string().dimmed(),
+                        delta_colored
+                    );
+                    proto_diff_rows.push(row.clone());
+                }
+                println!("{proto_div}");
+            }
+            Err(e) => {
+                eprintln!("  ⚠ Protocol deep diff skipped: {e}");
+            }
+        }
+    }
+
+    let format_plain_delta = |delta: f64, pct: f64| -> String {
+        let sign = if delta >= 0.0 { "+" } else { "" };
+        format!("{sign}{delta:.0} ({sign}{pct:.1}%)")
+    };
+
+    if markdown {
+        let md = format!(
+            "## 🏮 Atupa Gas Regression Report\n\n\
+            | Metric | Base | Target | Delta |\n\
+            |--------|------|--------|-------|\n\
+            | **Total Gas** | {} | {} | {} |\n\
+            | **Execution Gas** | {} | {} | {} |\n\
+            | **EVM Steps** | {} | {} | {} |\n\
+            | **Stylus Calls** | {} | {} | {} |\n\n\
+            *Profiled via Atupa Unified Tracer*\n",
+            base_total_gas,
+            target_total_gas,
+            format_plain_delta(total_gas_delta, total_gas_pct),
+            base_unified_cost,
+            target_unified_cost,
+            format_plain_delta(unified_delta, unified_pct),
+            base_evm,
+            tgt_evm,
+            format_plain_delta(evm_delta, evm_pct),
+            base_stylus,
+            tgt_stylus,
+            format_plain_delta(stylus_delta, stylus_pct)
+        );
+        let out_path = format!("artifacts/diff/{}_vs_{}.md", &base[..10], &target[..10]);
+        std::fs::create_dir_all("artifacts/diff").ok();
+
+        // Append protocol deep diff to markdown if available
+        let proto_section = if !proto_diff_rows.is_empty() {
+            let mut section = format!("\n### 🔬 {} Protocol Deep Diff\n\n", proto_name);
+            section.push_str("| Metric | Base | Target | Delta |\n");
+            section.push_str("|--------|------|--------|-------|\n");
+            for row in &proto_diff_rows {
+                let sign = if row.delta >= 0.0 { "+" } else { "" };
+                let emoji = if row.delta == 0.0 {
+                    ""
+                } else if (row.delta > 0.0) == row.higher_is_worse {
+                    "🔴 "
+                } else {
+                    "🟢 "
+                };
+                section.push_str(&format!(
+                    "| **{}** | {} | {} | {}{}{:.0} ({}{:.1}%) |\n",
+                    row.metric, row.base, row.target, emoji, sign, row.delta, sign, row.pct
+                ));
+            }
+            section
+        } else {
+            String::new()
+        };
+
+        std::fs::write(&out_path, md + &proto_section).context("Failed to write markdown diff")?;
+        println!("  📝 Markdown report written to {}", out_path.cyan());
+    }
+
+    if svg {
+        let base_trace_steps: Vec<atupa_core::TraceStep> = base_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
+        let base_normalized = TraceParser::normalize_raw(base_trace_steps);
+        let base_stacks = Aggregator::build_collapsed_stacks(&base_normalized);
+
+        let target_trace_steps: Vec<atupa_core::TraceStep> = target_report
+            .steps
+            .iter()
+            .map(|s| s.to_trace_step())
+            .collect();
+        let target_normalized = TraceParser::normalize_raw(target_trace_steps);
+        let target_stacks = Aggregator::build_collapsed_stacks(&target_normalized);
+
+        let svg_content = atupa_output::generate_diff_flamegraph(&base_stacks, &target_stacks)?;
+        let svg_path = format!("artifacts/diff/{}_vs_{}.svg", &base[..10], &target[..10]);
+        std::fs::create_dir_all("artifacts/diff").ok();
+        std::fs::write(&svg_path, svg_content).context("Failed to write diff flamegraph SVG")?;
+        println!("  🔥 Visual diff flamegraph written to {}", svg_path.cyan());
+    }
+
+    // Threshold Engine Evaluation
+    let mut failures = Vec::new();
+
+    let config_toml = if let Some(path) = diff_config {
+        AtupaConfigToml::load(std::path::Path::new(&path)).ok()
+    } else {
+        AtupaConfigToml::auto_load()
+    };
+
+    if let Some(t) = threshold {
+        // Simple Mode override
+        if total_gas_pct > t {
+            failures.push(format!(
+                "Total Gas increased by {:.1}% (limit: {:.1}%)",
+                total_gas_pct, t
+            ));
+        }
+    } else if let Some(ref cfg) = config_toml {
+        // TOML Config evaluation
+        if let Some(diff_cfg) = &cfg.diff {
+            if let Some(max_total) = diff_cfg.max_total_gas_increase_percent {
+                if total_gas_pct > max_total {
+                    failures.push(format!(
+                        "Total Gas increased by {:.1}% (limit: {:.1}%)",
+                        total_gas_pct, max_total
+                    ));
+                }
+            }
+            if let Some(max_exec) = diff_cfg.max_execution_gas_increase_percent {
+                if unified_pct > max_exec {
+                    failures.push(format!(
+                        "Execution Gas increased by {:.1}% (limit: {:.1}%)",
+                        unified_pct, max_exec
+                    ));
+                }
+            }
+            if let Some(max_evm) = diff_cfg.max_evm_steps_increase {
+                if evm_delta > max_evm as f64 {
+                    failures.push(format!(
+                        "EVM Steps increased by {:.0} (limit: {})",
+                        evm_delta, max_evm
+                    ));
+                }
+            }
+            if let Some(max_stylus) = diff_cfg.max_stylus_calls_increase {
+                if stylus_delta > max_stylus as f64 {
+                    failures.push(format!(
+                        "Stylus Calls increased by {:.0} (limit: {})",
+                        stylus_delta, max_stylus
+                    ));
+                }
+            }
+        }
+    }
+
+    // Final Output Handling
+    if output_format == OutputFormat::Json {
+        let diff_report = serde_json::json!({
+            "type": "diff",
+            "protocol": protocol.map(|p| format!("{:?}", p)),
+            "base": {
+                "tx_hash": base,
+                "report": base_report,
+            },
+            "target": {
+                "tx_hash": target,
+                "report": target_report,
+            },
+            "metrics": {
+                "base_total_gas": base_total_gas,
+                "target_total_gas": target_total_gas,
+                "gas_delta": total_gas_delta,
+                "gas_pct": total_gas_pct,
+                "base_unified_cost": base_unified_cost,
+                "target_unified_cost": target_unified_cost,
+                "unified_delta": unified_delta,
+                "unified_pct": unified_pct,
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&diff_report)?);
+    } else {
+        if !failures.is_empty() {
+            println!("\n  {}", "❌ [FAILED] Regression detected:".red().bold());
+            for f in failures.iter() {
+                println!("     - {}", f.red());
+            }
+        } else if threshold.is_some() || config_toml.is_some() {
+            println!(
+                "\n  {} Execution cost within acceptable limits.",
+                "✅ [PASSED]".green().bold()
+            );
+        }
+    }
+
+    if !failures.is_empty() {
+        return Err(anyhow::anyhow!("Gas regression thresholds exceeded"));
+    }
 
     Ok(())
 }
 
 // ─── Studio Command ───────────────────────────────────────────────────────────
 
-/// Resolve the studio directory using a three-tier strategy:
-///   1. Explicit CLI flag / ATUPA_STUDIO_DIR env var
-///   2. `<CWD>/studio/`          (running from workspace root)
-///   3. `<binary dir>/studio/`   (local dev install)
-fn resolve_studio_path(explicit: Option<String>) -> Result<std::path::PathBuf> {
-    if let Some(p) = explicit {
-        let path = std::path::PathBuf::from(&p);
-        if path.is_dir() {
-            return Ok(path);
+async fn cmd_studio(
+    _config: &AtupaConfig,
+    port: u16,
+    launch_browser: bool,
+    report_path: Option<String>,
+) -> Result<()> {
+    // 1. Read report if provided
+    let report_content = if let Some(path) = report_path.as_ref() {
+        Some(std::fs::read_to_string(path).context("Failed to read report file for Studio")?)
+    } else {
+        None
+    };
+
+    // 2. Prepare the server
+    let server = studio::StudioServer::new(report_content);
+    let mut url = format!("http://localhost:{port}/");
+    if report_path.is_some() {
+        url += "?auto=true";
+    }
+
+    eprintln!("{} Launching Atupa Studio...", "→".bold().cyan());
+
+    // Spawn server in background
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = server.start(port).await {
+            eprintln!("\n{} Studio server error: {e}", "⚠".red().bold());
         }
-        anyhow::bail!("ATUPA_STUDIO_DIR / --dir points to a non-existent directory: {p}");
-    }
+    });
 
-    // CWD/studio
-    let cwd_studio = std::env::current_dir()?.join("studio");
-    if cwd_studio.is_dir() {
-        return Ok(cwd_studio);
-    }
-
-    // binary-sibling/studio
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let sib = exe_dir.join("studio");
-            if sib.is_dir() {
-                return Ok(sib);
-            }
-        }
-    }
-
-    anyhow::bail!(
-        "Could not locate the Atupa Studio directory.\n\
-         Run this command from the project root, or set ATUPA_STUDIO_DIR."
-    )
-}
-
-async fn cmd_studio(port: u16, dir: Option<String>, launch_browser: bool) -> Result<()> {
-    let studio_dir = resolve_studio_path(dir)?;
-    eprintln!(
-        "{} {}",
-        "→ Studio:".bold(),
-        studio_dir.display().to_string().cyan()
-    );
-
-    // ── Ensure node_modules is present ────────────────────────────────────────
-    if !studio_dir.join("node_modules").exists() {
-        eprintln!("{}", "→ node_modules not found — running npm install…".dimmed());
-        let status = std::process::Command::new("npm")
-            .arg("install")
-            .current_dir(&studio_dir)
-            .status()
-            .context("Failed to run `npm install` — is Node.js installed?")?;
-        if !status.success() {
-            anyhow::bail!("`npm install` failed. Check the output above.");
-        }
-    }
-
-    // ── Spawn the Vite dev server ──────────────────────────────────────────────
-    let url = format!("http://localhost:{port}/");
-    eprintln!("{} {}\n", "→ Starting dev server at".bold(), url.cyan().bold());
-
-    let mut child = std::process::Command::new("npm")
-        .args(["run", "dev", "--", "--port", &port.to_string(), "--host"])
-        .current_dir(&studio_dir)
-        .spawn()
-        .context("Failed to spawn `npm run dev`")?;
-
-    // ── Poll until the port opens (max 15 s) ──────────────────────────────────
-    let pb = spinner("Waiting for Studio to start…");
+    // Wait for the port to be active
     let addr = format!("127.0.0.1:{port}");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-
-    loop {
-        if std::net::TcpStream::connect(&addr).is_ok() {
-            break;
-        }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::net::TcpStream::connect(&addr).is_err() {
         if std::time::Instant::now() > deadline {
-            let _ = child.kill();
-            anyhow::bail!("Studio did not start within 15 s on port {port}.");
+            anyhow::bail!("Studio server failed to start on port {port} within 5s.");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    pb.finish_with_message(format!(
+    eprintln!(
         "{} Studio ready at {}",
         "✔".green().bold(),
         url.cyan().bold()
-    ));
-
-    // ── Open browser ──────────────────────────────────────────────────────────
-    if launch_browser {
-        if let Err(e) = open::that(&url) {
-            eprintln!("{} Could not open browser: {e}", "⚠".yellow());
-        }
-    }
-
-    eprintln!(
-        "\n{}\n{}\n{}",
-        "  Press Ctrl+C to stop the Studio server.".dimmed(),
-        format!("  Drop a report.json into {url} to visualize a trace.").dimmed(),
-        "  Generate one with:  atupa capture --tx 0x... --output json --file report.json".dimmed(),
     );
 
-    // ── Keep running until the user presses Ctrl+C ────────────────────────────
-    let _ = child.wait();
+    // 3. Open browser
+    if launch_browser && let Err(e) = open::that(&url) {
+        eprintln!("{} Could not open browser: {e}", "⚠".yellow());
+    }
+
+    // 4. Footer info
+    if let Some(path) = report_path {
+        eprintln!(
+            "\n  {} Report loaded: {}\n  The Studio has automatically opened this report.",
+            "✔".green().bold(),
+            path.cyan().bold(),
+        );
+    }
+    eprintln!("{}\n", "  Press Ctrl+C to stop the Studio server.".dimmed());
+
+    // Keep the main thread alive while the server runs
+    let _ = server_handle.await;
     Ok(())
 }
 
 // ─── Banner & Rendering ───────────────────────────────────────────────────────
-
 
 fn print_banner() {
     eprintln!(
@@ -578,87 +1081,187 @@ fn print_banner() {
     eprintln!();
 }
 
+fn hostio_category_color(label: &str) -> &'static str {
+    match label {
+        "storage_flush_cache" | "storage_store_bytes32" => "\x1b[31;1m",
+        "storage_load_bytes32" | "storage_cache_bytes32" => "\x1b[33m",
+        "native_keccak256" => "\x1b[35m",
+        "read_args" | "write_result" | "pay_for_memory_grow" => "\x1b[32m",
+        "msg_sender" | "msg_value" | "msg_reentrant" | "emit_log" | "account_balance"
+        | "block_hash" => "\x1b[36m",
+        "call" | "static_call" | "delegate_call" | "create" => "\x1b[34m",
+        _ => "\x1b[90m",
+    }
+}
+
 fn render_capture_summary(report: &StitchedReport) -> String {
+    const RESET: &str = "\x1b[0m";
     let div = "─".repeat(56).dimmed().to_string();
+    let wide_div = "━".repeat(72);
     let mut out = String::new();
 
-    out += &format!("{}\n", "  UNIFIED EXECUTION SUMMARY".bold().underline());
-    out += &format!("{div}\n");
-
     out += &format!(
-        "  {:<34} {}\n",
-        "EVM Trace Gas (Total):".bold(),
-        report.total_evm_gas.to_string().green()
-    );
-    out += &format!(
-        "  {:<34} {}\n",
-        "Stylus Ink (raw):".bold(),
-        report.total_stylus_ink.to_string().yellow()
-    );
-    out += &format!(
-        "  {:<34} {}\n",
-        "  → Gas-equivalent (÷10,000):".dimmed(),
-        format!("{:.2}", report.total_stylus_gas_equiv).yellow()
+        "  {} ({})\n",
+        "UNIFIED EXECUTION SUMMARY".bold().underline(),
+        get_network_name(report.chain_id).cyan()
     );
     out += &format!("{div}\n");
 
+    // ── Gas totals with Execution vs Intrinsic split ───────────────────────────────
+    if let Some(on_chain) = report.on_chain_gas_used {
+        let execution_gas = report.total_evm_gas;
+        let intrinsic_gas = on_chain.saturating_sub(execution_gas);
+        out += &format!(
+            "  {:<34} {}\n",
+            "Total Gas Used (on-chain):".bold(),
+            on_chain.to_string().green().bold()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "  ├─ Execution:".dimmed(),
+            execution_gas.to_string().green()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "  └─ Intrinsic (base + calldata):".dimmed(),
+            intrinsic_gas.to_string().yellow()
+        );
+    } else {
+        out += &format!(
+            "  {:<34} {}\n",
+            "EVM Trace Gas (Total):".bold(),
+            report.total_evm_gas.to_string().green()
+        );
+    }
+
+    if report.total_stylus_ink > 0 {
+        out += &format!(
+            "  {:<34} {}\n",
+            "Stylus Ink (raw):".bold(),
+            report.total_stylus_ink.to_string().yellow()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "  → Gas-equivalent (÷10,000):".dimmed(),
+            format!("{:.2}", report.total_stylus_gas_equiv).yellow()
+        );
+    }
+
+    if report.vm_boundary_count > 0 {
+        out += &format!(
+            "  {:<34} {}\n",
+            "VM Boundaries (EVM ↔ WASM):".bold(),
+            report.vm_boundary_count.to_string().magenta()
+        );
+    }
+
+    out += &format!("{div}\n");
+    out += &format!(
+        "  {:<34} {}\n",
+        "TOTAL UNIFIED COST:".bold().cyan(),
+        format!("{:.2} gas", report.total_unified_cost)
+            .cyan()
+            .bold()
+    );
+    out += &format!("{div}\n");
+
+    // EVM step count always shown
     out += &format!(
         "  {:<34} {}\n",
         "EVM Steps:".bold(),
         evm_count(report).to_string().green()
     );
-    out += &format!(
-        "  {:<34} {}\n",
-        "Stylus HostIO Steps:".bold(),
-        report.stylus_steps().len().to_string().yellow()
-    );
-    out += &format!(
-        "  {:<34} {}\n",
-        "VM Boundary Crossings (EVM→WASM):".bold(),
-        report.vm_boundary_count.to_string().cyan().bold()
-    );
-    out += &format!("{div}\n");
 
-    // EVM→WASM boundary detail
-    if report.vm_boundary_count > 0 {
-        out += &format!("  {}\n", "EVM→WASM Boundary Crossings:".bold());
-        for (i, step) in report.boundary_steps().iter().take(5).enumerate() {
-            out += &format!(
-                "    {}  {} at depth {}\n",
-                format!("[{}]", i + 1).cyan(),
-                step.label.bold(),
-                step.depth.to_string().dimmed()
-            );
-        }
-        if report.vm_boundary_count > 5 {
-            out += &format!(
-                "    … and {} more\n",
-                (report.vm_boundary_count - 5).to_string().dimmed()
-            );
-        }
-        out += &format!("{div}\n");
-    }
-
-    // Top Stylus ink consumers
+    // Stylus section — only when HostIO steps exist
     let stylus = report.stylus_steps();
     if !stylus.is_empty() {
+        // Aggregate ink cost by label
         let mut grouped: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
         for step in stylus.iter() {
             *grouped.entry(step.label.clone()).or_insert(0.0) += step.cost_equiv;
         }
-
         let mut aggregated: Vec<(String, f64)> = grouped.into_iter().collect();
-        // Sort descending by cost
         aggregated.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-        out += &format!("  {}\n", "🔥 Top Ink Consumers (Stylus HostIO):".bold());
-        for (label, cost) in aggregated.iter().take(5) {
+        let total_ink_gas: f64 = aggregated.iter().map(|(_, c)| c).sum();
+        let unique_paths = aggregated.len();
+
+        out += &format!(
+            "  {:<34} {}\n",
+            "Stylus HostIO Calls:".bold(),
+            stylus.len().to_string().yellow()
+        );
+        out += &format!(
+            "  {:<34} {}\n",
+            "Unique HostIO Paths:".bold(),
+            unique_paths.to_string().yellow()
+        );
+
+        if report.vm_boundary_count > 0 {
+            out += &format!("  {}\n", "EVM→WASM Boundary Details:".bold());
+            for (i, step) in report.boundary_steps().iter().take(5).enumerate() {
+                out += &format!(
+                    "    {}  {} at depth {}\n",
+                    format!("[{}]", i + 1).cyan(),
+                    step.label.bold(),
+                    step.depth.to_string().dimmed()
+                );
+            }
+            if report.vm_boundary_count > 5 {
+                out += &format!(
+                    "    … and {} more\n",
+                    (report.vm_boundary_count - 5).to_string().dimmed()
+                );
+            }
+        }
+
+        out += &format!("{div}\n");
+
+        // ── Colour-coded hot-path table ────────────────────────────────────
+        out += &format!("  {}\n", "🔥 STYLUS HOT PATHS".bold());
+        out += &format!("  {wide_div}\n");
+        out += &format!(
+            "  ┃ {:<42} ┃ {:>10} ┃ {:>14} ┃ {:>7} ┃\n",
+            "HostIO (Hottest First)", "GAS", "INK (raw)", "%"
+        );
+        out += &format!("  {wide_div}\n");
+        for (label, cost_gas) in aggregated.iter().take(10) {
+            let cost_ink = (cost_gas * 10_000.0) as u64;
+            let pct = if total_ink_gas > 0.0 {
+                cost_gas / total_ink_gas * 100.0
+            } else {
+                0.0
+            };
+            let color = hostio_category_color(label);
+            let gas_str = format!("{:.0}", cost_gas);
             out += &format!(
-                "    {:<36} {:>8.2} gas-equiv\n",
-                label.yellow(),
-                cost
+                "  ┃ {color}{:<42}{RESET} ┃ {gas_str:>10} ┃ {cost_ink:>14} ┃ {pct:>6.1}% ┃\n",
+                label,
             );
         }
+        out += &format!("  {wide_div}\n");
+
+        // ── ASCII flamegraph ───────────────────────────────────────────────
+        out += &format!("\n  {}\n", "📊 SIMPLIFIED FLAMEGRAPH".bold());
+        out += "  root ██████████████████████████████████████████████████ 100%\n";
+        for (label, cost_gas) in aggregated.iter().take(5) {
+            let pct = if total_ink_gas > 0.0 {
+                cost_gas / total_ink_gas * 100.0
+            } else {
+                0.0
+            };
+            let bar_width = (pct / 2.0) as usize;
+            let bar = "█".repeat(bar_width);
+            let color = hostio_category_color(label);
+            out += &format!(
+                "  └─ {color}{:<20}{RESET} {color}{:<50}{RESET} {:>5.1}%\n",
+                label, bar, pct
+            );
+        }
+        if unique_paths > 10 {
+            out += &format!("\n   ({} of {} unique paths shown)\n", 10, unique_paths);
+        }
+
         out += &format!("{div}\n");
     }
 
@@ -666,10 +1269,25 @@ fn render_capture_summary(report: &StitchedReport) -> String {
     out
 }
 
-fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedReport) {
+fn print_aave_report(
+    aave: &atupa_aave::LiquidationReport,
+    nitro: &StitchedReport,
+    top_selector: Option<&str>,
+) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  AAVE v3 PROTOCOL AUDIT".bold().underline());
     println!("{div}");
+
+    // Show the actual top-level function called, resolved from calldata
+    if let Some(sel) = top_selector {
+        let fn_name = atupa_aave::AaveV3Adapter::resolve_selector_label(sel)
+            .unwrap_or_else(|| format!("unknown ({})", sel));
+        println!(
+            "  {:<34} {}",
+            "Top-Level Call:".bold(),
+            fn_name.yellow().bold()
+        );
+    }
 
     let rows: &[(&str, String)] = &[
         ("Total Gas (Aave frame):", aave.total_gas.to_string()),
@@ -719,18 +1337,36 @@ fn print_aave_report(aave: &atupa_aave::LiquidationReport, nitro: &StitchedRepor
     println!("{div}");
 }
 
-fn print_lido_report(lido: &atupa_lido::LidoReport, nitro: &StitchedReport) {
+fn print_lido_report(
+    lido: &atupa_lido::LidoReport,
+    nitro: &StitchedReport,
+    top_selector: Option<&str>,
+) {
     let div = "─".repeat(56).dimmed().to_string();
     println!("{}", "  LIDO stETH PROTOCOL AUDIT".bold().underline());
     println!("{div}");
 
+    // Show the actual top-level function called, resolved from calldata
+    if let Some(sel) = top_selector {
+        let fn_name = atupa_lido::LidoAdapter::resolve_selector_label(sel)
+            .unwrap_or_else(|| format!("unknown fn ({})", sel));
+        println!(
+            "  {:<34} {}",
+            "Top-Level Call:".bold(),
+            fn_name.yellow().bold()
+        );
+    }
+
     let rows: &[(&str, String)] = &[
         ("Total Gas (Lido frame):", lido.total_gas.to_string()),
-        ("Staking Operations Gas:", lido.staking_gas.to_string()),
+        ("Storage Reads (SLOAD):", lido.storage_reads.to_string()),
+        ("Storage Writes (SSTORE):", lido.storage_writes.to_string()),
+        ("External Calls:", lido.external_calls.to_string()),
         ("Shares Transfers:", lido.shares_transfers.to_string()),
-        ("Token Transfers:", lido.token_transfers.to_string()),
-        ("Oracle Updates:", lido.oracle_updates.to_string()),
-        ("Wrapped TXs (wstETH):", lido.wrapped_txs.to_string()),
+        ("Oracle Reports:", lido.oracle_reports.to_string()),
+        ("Withdrawal Requests:", lido.withdrawal_requests.to_string()),
+        ("Withdrawal Claims:", lido.withdrawal_claims.to_string()),
+        ("Wrapped Ops (wstETH):", lido.wrapped_ops.to_string()),
         (
             "Cross-VM Calls (Stylus):",
             nitro.vm_boundary_count.to_string(),
@@ -802,6 +1438,7 @@ fn bridge_raw_to_trace_step(raw: &RawStructLog) -> TraceStep {
         memory: raw.memory.clone(),
         error: raw.error.clone(),
         reverted: raw.error.is_some(),
+        vm_kind: atupa_core::VmKind::Evm,
     }
 }
 
@@ -815,4 +1452,52 @@ fn spinner(msg: &str) -> ProgressBar {
     pb.enable_steady_tick(Duration::from_millis(80));
     pb.set_message(msg.to_string());
     pb
+}
+
+fn get_network_name(chain_id: u64) -> String {
+    match chain_id {
+        1 => "Ethereum Mainnet".to_string(),
+        11155111 => "Sepolia Testnet".to_string(),
+        17000 => "Holesky Testnet".to_string(),
+        42161 => "Arbitrum One".to_string(),
+        42170 => "Arbitrum Nova".to_string(),
+        421614 => "Arbitrum Sepolia".to_string(),
+        8453 => "Base Mainnet".to_string(),
+        84532 => "Base Sepolia".to_string(),
+        10 => "Optimism".to_string(),
+        11155420 => "Optimism Sepolia".to_string(),
+        137 => "Polygon POS".to_string(),
+        1337 | 31337 => "Local Devnet".to_string(),
+        412346 => "Nitro Local Devnet".to_string(),
+        0 => "Unknown Network".to_string(),
+        id => format!("Chain ID: {}", id),
+    }
+}
+
+fn resolve_artifact_path(path: Option<String>, category: &str, tx_hash: &str, ext: &str) -> String {
+    let filename = path.unwrap_or_else(|| {
+        let short = tx_hash
+            .trim_start_matches("0x")
+            .get(..10)
+            .unwrap_or(tx_hash);
+        match ext {
+            "json" => format!("report_{short}.json"),
+            "svg" => format!("profile_{short}.svg"),
+            _ => format!("artifact_{short}.{ext}"),
+        }
+    });
+
+    let pb = std::path::PathBuf::from(&filename);
+    // If it's a simple filename (no parent directory), move it to artifacts/<category>/
+    if pb
+        .parent()
+        .map(|p| p.as_os_str().is_empty())
+        .unwrap_or(true)
+    {
+        let dir = format!("artifacts/{}", category);
+        let _ = std::fs::create_dir_all(&dir);
+        format!("{}/{}", dir, filename)
+    } else {
+        filename
+    }
 }

@@ -38,10 +38,24 @@ profile_*.svg
 
 .ideanode_modules/
 
-# Atupa trace reports (local test artefacts)
+# Atupa trace reports (local test artefacts — any *.json at workspace root)
 report.json
 *.report.json
+*-report.json
+arb-*.json
+base-*.json
+stylus-*.json
+
+# Atupa generated SVGs at workspace root
+*.svg
 
 # Atupa Studio build output
 studio/dist/
 studio/node_modules/
+
+# Local artifacts
+artifacts/
+
+# Playground
+playground/out/
+playground/cache/

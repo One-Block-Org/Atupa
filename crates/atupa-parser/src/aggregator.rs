@@ -1,4 +1,4 @@
-use atupa_core::{CollapsedStack, TraceStep};
+use atupa_core::{CollapsedStack, TraceStep, VmKind};
 use log::debug;
 use std::collections::HashMap;
 
@@ -24,9 +24,11 @@ impl Aggregator {
         struct AggregatedData {
             total_gas: u64,
             _last_pc: u64,
+            max_depth: u16,
             target_address: Option<String>,
             resolved_label: Option<String>,
             reverted: bool,
+            vm_kind: VmKind,
         }
 
         let registry = atupa_adapters::AdapterRegistry::new();
@@ -65,10 +67,9 @@ impl Aggregator {
                         // Extract target address (second item from top)
                         let hex_addr = &stack[stack.len() - 2];
                         let clean_hex = hex_addr.trim_start_matches("0x");
-                        if clean_hex.len() >= 40 {
-                            let extracted = &clean_hex[clean_hex.len() - 40..];
-                            target_address = Some(format!("0x{}", extracted));
-                        }
+                        let padded = format!("{:0>40}", clean_hex);
+                        let extracted = &padded[padded.len() - 40..];
+                        target_address = Some(format!("0x{}", extracted));
                     }
 
                     // Attempt to extract the 4-byte selector from Memory using Offset & Length
@@ -145,13 +146,18 @@ impl Aggregator {
             // Accumulate gas cost and flags
             let entry = stack_map.entry(stack_str).or_insert(AggregatedData {
                 total_gas: 0,
-                _last_pc: 0,
+                _last_pc: step.pc,
+                max_depth: step.depth,
                 target_address: None,
                 resolved_label: None,
                 reverted: false,
+                vm_kind: step.vm_kind.clone(),
             });
             entry.total_gas += step.gas_cost;
             entry._last_pc = step.pc;
+            if step.depth > entry.max_depth {
+                entry.max_depth = step.depth;
+            }
             if target_address.is_some() {
                 entry.target_address = target_address;
             }
@@ -161,6 +167,8 @@ impl Aggregator {
             if step.reverted {
                 entry.reverted = true;
             }
+            // Leaf VM kind wins for the stack
+            entry.vm_kind = step.vm_kind.clone();
         }
 
         let mut stacks: Vec<CollapsedStack> = stack_map
@@ -169,13 +177,15 @@ impl Aggregator {
                 stack,
                 weight: data.total_gas,
                 last_pc: Some(data._last_pc),
+                depth: data.max_depth,
+                vm_kind: data.vm_kind,
                 target_address: data.target_address,
                 resolved_label: data.resolved_label,
                 reverted: data.reverted,
             })
             .collect();
 
-        stacks.sort_by(|a, b| b.weight.cmp(&a.weight));
+        stacks.sort_by_key(|b| std::cmp::Reverse(b.weight));
         debug!("Built {} unique collapsed stacks", stacks.len());
 
         stacks
@@ -192,61 +202,41 @@ mod tests {
         let steps = vec![
             // Root context opcodes (Depth 1)
             TraceStep {
-                pc: 0,
                 op: "PUSH1".into(),
                 gas: 100,
                 gas_cost: 3,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
                 pc: 1,
                 op: "CALL".into(),
                 gas: 90,
-                gas_cost: 0,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             // Sub-context opcodes (Depth 2)
             TraceStep {
-                pc: 0,
                 op: "SSTORE".into(),
                 gas: 50,
                 gas_cost: 20,
                 depth: 2,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
                 pc: 1,
                 op: "RETURN".into(),
                 gas: 20,
-                gas_cost: 0,
                 depth: 2,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             // Back to root (Depth 1)
             TraceStep {
                 pc: 2,
                 op: "STOP".into(),
                 gas: 15,
-                gas_cost: 0,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
         ];
 
@@ -263,59 +253,37 @@ mod tests {
     fn test_aggregator_recursive_calls() {
         let steps = vec![
             TraceStep {
-                pc: 0,
                 op: "CALL".into(),
                 gas: 1000,
-                gas_cost: 0,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
-                pc: 0,
                 op: "CALL".into(),
                 gas: 900,
-                gas_cost: 0,
                 depth: 2,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
-                pc: 0,
                 op: "SSTORE".into(),
                 gas: 800,
                 gas_cost: 5000,
                 depth: 3,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
                 pc: 1,
                 op: "RETURN".into(),
                 gas: 700,
-                gas_cost: 0,
                 depth: 3,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
                 pc: 1,
                 op: "RETURN".into(),
                 gas: 600,
-                gas_cost: 0,
                 depth: 2,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
         ];
 
@@ -331,26 +299,19 @@ mod tests {
     fn test_aggregator_revert_propagation() {
         let steps = vec![
             TraceStep {
-                pc: 0,
                 op: "CALL".into(),
                 gas: 1000,
-                gas_cost: 0,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
-                pc: 0,
                 op: "REVERT".into(),
                 gas: 900,
                 gas_cost: 200,
                 depth: 2,
-                stack: None,
-                memory: None,
                 error: Some("Reverted".into()),
                 reverted: true,
+                ..Default::default()
             },
         ];
 
@@ -392,26 +353,20 @@ mod tests {
 
         let steps = vec![
             TraceStep {
-                pc: 0,
                 op: "CALL".into(),
                 gas: 1000,
                 gas_cost: 50,
                 depth: 1,
                 stack: Some(stack),
                 memory: Some(memory),
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
             TraceStep {
                 pc: 1,
                 op: "STOP".into(),
                 gas: 900,
-                gas_cost: 0,
                 depth: 1,
-                stack: None,
-                memory: None,
-                error: None,
-                reverted: false,
+                ..Default::default()
             },
         ];
 
@@ -454,15 +409,13 @@ mod tests {
         ];
 
         let steps = vec![TraceStep {
-            pc: 0,
             op: "CALL".into(),
             gas: 1000,
             gas_cost: 80,
             depth: 1,
             stack: Some(stack),
             memory: Some(memory),
-            error: None,
-            reverted: false,
+            ..Default::default()
         }];
 
         let stacks = Aggregator::build_collapsed_stacks(&steps);

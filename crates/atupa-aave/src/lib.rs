@@ -5,7 +5,7 @@
 //! mechanics, and GHO stablecoin risk monitoring.
 
 use atupa_adapters::ProtocolAdapter;
-use atupa_core::TraceStep;
+use atupa_core::{DiffRow, ProtocolDiffReport, TraceStep};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ const POOL_SELECTORS: &[(&str, &str)] = &[
     ("0x095ea7b3", "approve"),      // ERC-20
     ("0x1e9a6950", "setUserUseReserveAsCollateral"),
     ("0x02c205f0", "swapBorrowRateMode"),
+    ("0x1e9d0e2e", "claimRewards"),
 ];
 
 /// Known GHO Facilitators (Ethereum Mainnet).
@@ -100,6 +101,23 @@ impl ProtocolAdapter for AaveV3Adapter {
         // Fall through to GHO selectors
         for &(known_sel, label) in GHO_SELECTORS {
             if sel == known_sel {
+                return Some(format!("GHO::{label}"));
+            }
+        }
+        None
+    }
+}
+
+impl AaveV3Adapter {
+    /// Resolve a 4-byte selector string to a human-readable label (no instance needed).
+    pub fn resolve_selector_label(selector: &str) -> Option<String> {
+        for &(known_sel, label) in POOL_SELECTORS {
+            if selector == known_sel {
+                return Some(format!("AaveV3Pool::{label}"));
+            }
+        }
+        for &(known_sel, label) in GHO_SELECTORS {
+            if selector == known_sel {
                 return Some(format!("GHO::{label}"));
             }
         }
@@ -307,6 +325,90 @@ impl AaveDeepTracer {
 
         metrics
     }
+
+    /// Compares two traces with full Aave protocol analysis and returns a
+    /// `ProtocolDiffReport` containing field-by-field deltas.
+    pub fn diff_reports(
+        &self,
+        base_hash: &str,
+        base_steps: &[TraceStep],
+        target_hash: &str,
+        target_steps: &[TraceStep],
+    ) -> anyhow::Result<ProtocolDiffReport> {
+        let base = self.analyze_liquidation(base_hash, base_steps)?;
+        let target = self.analyze_liquidation(target_hash, target_steps)?;
+
+        let base_gho = self.extract_gho_metrics(base_steps);
+        let target_gho = self.extract_gho_metrics(target_steps);
+
+        let rows = vec![
+            DiffRow::new(
+                "Total Gas",
+                base.total_gas as f64,
+                target.total_gas as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Liquidation Gas",
+                base.liquidation_gas as f64,
+                target.liquidation_gas as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Reads (SLOAD)",
+                base.storage_reads as f64,
+                target.storage_reads as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Storage Writes (SSTORE)",
+                base.storage_writes as f64,
+                target.storage_writes as f64,
+                true,
+            ),
+            DiffRow::new(
+                "External Calls",
+                base.external_calls as f64,
+                target.external_calls as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Oracle Calls",
+                base.oracle_calls as f64,
+                target.oracle_calls as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Max Call Depth",
+                base.max_depth as f64,
+                target.max_depth as f64,
+                true,
+            ),
+            DiffRow::new(
+                "Liq. Efficiency",
+                base.liquidation_efficiency,
+                target.liquidation_efficiency,
+                true,
+            ),
+            DiffRow::new(
+                "GHO Mint Count",
+                base_gho.mint_count as f64,
+                target_gho.mint_count as f64,
+                false,
+            ),
+            DiffRow::new(
+                "GHO Burn Count",
+                base_gho.burn_count as f64,
+                target_gho.burn_count as f64,
+                false,
+            ),
+        ];
+
+        Ok(ProtocolDiffReport {
+            protocol: "Aave v3 / GHO".to_string(),
+            rows,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -315,15 +417,12 @@ mod tests {
 
     fn make_call_step(op: &str, selector: &str, gas_cost: u64) -> TraceStep {
         TraceStep {
-            pc: 0,
             op: op.to_string(),
             gas: 1_000_000,
             gas_cost,
             depth: 1,
             stack: Some(vec![selector.to_string()]),
-            memory: None,
-            error: None,
-            reverted: false,
+            ..Default::default()
         }
     }
 

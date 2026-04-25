@@ -1,0 +1,173 @@
+name: 'Atupa Gas Regression Check'
+description: |
+  Automated gas regression detection for Ethereum & Arbitrum Stylus transactions.
+  Runs atupa diff between two transactions, uploads an SVG flamegraph artifact,
+  and posts a sticky Markdown report to the Pull Request.
+author: 'One Block Ltd'
+branding:
+  icon: 'zap'
+  color: 'orange'
+
+# ─── Inputs ─────────────────────────────────────────────────────────────────────
+
+inputs:
+  base_tx:
+    description: 'Baseline transaction hash (e.g. last commit on main)'
+    required: true
+  target_tx:
+    description: 'Target transaction hash (e.g. current PR branch)'
+    required: true
+  rpc_url:
+    description: 'RPC endpoint for the target network'
+    required: false
+    default: 'http://localhost:8545'
+  protocol:
+    description: 'Optional: protocol-specific deep diff (aave | lido)'
+    required: false
+    default: ''
+  threshold:
+    description: 'Simple gas increase threshold % (overrides atupa.toml)'
+    required: false
+    default: ''
+  config:
+    description: 'Path to atupa.toml config file'
+    required: false
+    default: 'atupa.toml'
+  post_comment:
+    description: 'Post diff as a sticky PR comment (true | false)'
+    required: false
+    default: 'true'
+  upload_svg:
+    description: 'Upload the SVG flamegraph as a workflow artifact (true | false)'
+    required: false
+    default: 'true'
+  upload_json:
+    description: 'Upload the raw JSON trace reports for Atupa Studio (true | false)'
+    required: false
+    default: 'false'
+
+# ─── Outputs ────────────────────────────────────────────────────────────────────
+
+outputs:
+  diff_md_path:
+    description: 'Path to the generated Markdown diff report'
+    value: ${{ steps.diff.outputs.md_path }}
+  diff_svg_path:
+    description: 'Path to the generated SVG flamegraph'
+    value: ${{ steps.diff.outputs.svg_path }}
+  regression_detected:
+    description: 'true if a gas regression threshold was exceeded'
+    value: ${{ steps.diff.outputs.regression_detected }}
+
+# ─── Steps ──────────────────────────────────────────────────────────────────────
+
+runs:
+  using: 'composite'
+  steps:
+
+    # 1. Source-aware binary setup (stolen & improved from Stylus-Trace)
+    #    - If we are INSIDE the Atupa repo, build from source and cache.
+    #    - If we are in a CONSUMER repo, install from crates.io.
+    - name: Setup Atupa Binary
+      shell: bash
+      run: |
+        if [ -f "${{ github.workspace }}/bin/atupa/Cargo.toml" ]; then
+          echo "🏠 Running inside Atupa repo — building from source…"
+          if [ -d "${{ github.workspace }}/studio" ]; then
+            echo "🎨 Building Atupa Studio frontend…"
+            cd studio && npm install && npm run build && cd ..
+          fi
+          cargo build --release -p atupa
+          echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
+        elif command -v atupa &>/dev/null; then
+          echo "✅ atupa already installed: $(atupa --version)"
+        else
+          echo "📦 Installing atupa from crates.io…"
+          cargo install atupa --locked
+        fi
+
+    # 2. Run diff — capture exit code without failing immediately
+    - name: Run Atupa Diff
+      id: diff
+      shell: bash
+      run: |
+        PROTO_FLAG=""
+        if [ -n "${{ inputs.protocol }}" ]; then
+          PROTO_FLAG="--protocol ${{ inputs.protocol }}"
+        fi
+
+        THRESHOLD_FLAG=""
+        if [ -n "${{ inputs.threshold }}" ]; then
+          THRESHOLD_FLAG="--threshold ${{ inputs.threshold }}"
+        fi
+
+        CONFIG_FLAG=""
+        if [ -f "${{ inputs.config }}" ]; then
+          CONFIG_FLAG="--config ${{ inputs.config }}"
+        fi
+
+        JSON_FLAG=""
+        if [ "${{ inputs.upload_json }}" = "true" ]; then
+          JSON_FLAG="--output json"
+        fi
+
+        # Run the diff, allow non-zero exit so we can post the comment before failing
+        atupa diff \
+          -r "${{ inputs.rpc_url }}" \
+          --base "${{ inputs.base_tx }}" \
+          --target "${{ inputs.target_tx }}" \
+          --markdown \
+          --svg \
+          $PROTO_FLAG \
+          $THRESHOLD_FLAG \
+          $CONFIG_FLAG \
+          $JSON_FLAG && REGRESSION=false || REGRESSION=true
+
+        # Discover output paths
+        BASE_SHORT="${{ inputs.base_tx }}"
+        TARGET_SHORT="${{ inputs.target_tx }}"
+        MD_PATH="artifacts/diff/${BASE_SHORT:0:10}_vs_${TARGET_SHORT:0:10}.md"
+        SVG_PATH="artifacts/diff/${BASE_SHORT:0:10}_vs_${TARGET_SHORT:0:10}.svg"
+
+        echo "md_path=${MD_PATH}"      >> $GITHUB_OUTPUT
+        echo "svg_path=${SVG_PATH}"    >> $GITHUB_OUTPUT
+        echo "regression_detected=${REGRESSION}" >> $GITHUB_OUTPUT
+
+    # 3. Upload SVG flamegraph as a workflow artifact (link appears in PR checks tab)
+    - name: Upload SVG Flamegraph
+      if: inputs.upload_svg == 'true' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: atupa-flamegraph-${{ inputs.base_tx != '' && inputs.base_tx || 'base' }}
+        path: ${{ steps.diff.outputs.svg_path }}
+        if-no-files-found: warn
+        retention-days: 30
+
+    # 3.5 Upload JSON Reports for Atupa Studio
+    - name: Upload JSON Reports
+      if: inputs.upload_json == 'true' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: atupa-reports-${{ inputs.base_tx != '' && inputs.base_tx || 'base' }}
+        path: artifacts/reports/
+        if-no-files-found: warn
+        retention-days: 30
+
+    # 4. Post sticky PR comment (updates in-place on every new push to PR)
+    - name: Post Sticky PR Comment
+      if: inputs.post_comment == 'true' && github.event_name == 'pull_request' && always()
+      continue-on-error: true
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        header: atupa-gas-diff
+        path: ${{ steps.diff.outputs.md_path }}
+
+    # 5. Finally: fail the job if a regression was detected
+    - name: Enforce Regression Gate
+      shell: bash
+      run: |
+        if [ "${{ steps.diff.outputs.regression_detected }}" = "true" ]; then
+          echo "❌ Atupa detected a gas regression. See the PR comment for details."
+          exit 1
+        fi
+        echo "✅ No gas regressions detected."

@@ -26,6 +26,7 @@
 - **📊 HostIO Flamegraph**: Surfaces the most expensive Stylus Host I/O calls (`storage_flush_cache`, `native_keccak256`, etc.) ranked by gas-equivalent cost.
 - **🚨 Crisp Revert Identification**: Instantly identifies failing sub-calls with high-contrast highlights.
 - **🔍 Smart Contract Resolution**: Automatically resolves hex addresses to verified contract names via Etherscan V2.
+- **🚀 Automated CI/CD Pipeline**: Built-in `atupa init` for zero-config gas regression gating in GitHub Actions.
 - **💉 Protocol-Specific Deep Auditing**: Built-in deep traces for **Lido stETH** and **Aave v3**.
 - **🛠 Modular Library Architecture**: Pure Rust workspace with specialized crates for adapters, RPC, parsing, and output.
 
@@ -35,6 +36,15 @@
 
 ```bash
 cargo install atupa
+```
+
+### 🏮 One-Click Initialization
+
+Bootstrap your project with Atupa profiling and automated CI regression in one command.
+
+```bash
+# Detects Foundry/Hardhat and sets up atupa.toml + GitHub Action
+atupa init
 ```
 
 ### Capturing a Unified Trace
@@ -51,6 +61,17 @@ atupa audit --protocol lido --tx 0x...
 
 # Compare execution cost of two transactions
 atupa diff --base 0x... --target 0x...
+```
+
+## 🛡 Automated Gas Regression (CI)
+
+Atupa is designed to sit inside your CI/CD pipeline. Use `atupa init` to generate a `.github/workflows/atupa.yml` file that:
+1. Runs your profile scripts on the base branch (baseline).
+2. Runs your profile scripts on the pull request branch (target).
+3. Compares results and fails the CI if gas regressions exceed your `atupa.toml` thresholds.
+
+```bash
+atupa diff --base 0xBASE_TX --target 0xPR_TX --protocol lido
 ```
 
 ### Run the Demo

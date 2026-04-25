@@ -21,3 +21,4 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+dirs = { workspace = true }

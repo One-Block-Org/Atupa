@@ -1,0 +1,261 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Atupa Gas Regression — Automated CI Workflow
+#
+# On every PR against main:
+#   1. Spins up Anvil (local EVM) for isolated testing
+#   2. Deploys the contract at HEAD of `main` → runs a tx → saves BASELINE hash
+#   3. Deploys the contract at HEAD of the PR branch → runs the same tx → TARGET hash
+#   4. Runs `atupa diff` to compare gas usage
+#   5. Posts a sticky Markdown report to the PR, uploads SVG flamegraph
+#   6. Fails CI if any threshold in atupa.toml is exceeded
+#
+# REQUIRED SECRETS (in repo Settings → Secrets):
+#   ATUPA_RPC_URL  — Optional: override Anvil with a real mainnet fork RPC
+#
+# REQUIRED REPO VARIABLES:
+#   PROFILE_SCRIPT — relative path to a forge/cast script that outputs a TX hash
+#                    to stdout (default: script/ProfileScript.s.sol)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: ⛽ Atupa Gas Regression
+
+on:
+  pull_request:
+    branches: [ main ]
+  # Allow manual trigger for debugging
+  workflow_dispatch:
+    inputs:
+      base_tx:
+        description: 'Override base transaction hash'
+        required: false
+      target_tx:
+        description: 'Override target transaction hash'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Use Anvil by default; override with a real RPC via secret for mainnet-fork
+  RPC_URL: ${{ secrets.ATUPA_RPC_URL || 'http://127.0.0.1:8545' }}
+  ANVIL_PORT: 8545
+  ANVIL_MNEMONIC: 'test test test test test test test test test test test junk'
+
+jobs:
+  # ── Job 1: Capture BASELINE gas from `main` branch ─────────────────────────
+  baseline:
+    name: 📐 Baseline (main)
+    runs-on: ubuntu-latest
+    outputs:
+      tx_hash: ${{ steps.capture.outputs.tx_hash }}
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: atupa-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install Foundry (Anvil + Cast + Forge)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start Anvil (local ephemeral EVM)
+        shell: bash
+        run: |
+          anvil \
+            --port ${{ env.ANVIL_PORT }} \
+            --mnemonic "${{ env.ANVIL_MNEMONIC }}" \
+            --steps-tracing \
+            --silent &
+          echo "ANVIL_PID=$!" >> $GITHUB_ENV
+          # Wait for Anvil to be ready
+          for i in $(seq 1 20); do
+            cast block-number --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} &>/dev/null && break
+            sleep 0.5
+          done
+          echo "✅ Anvil is ready on port ${{ env.ANVIL_PORT }}"
+
+      - name: Deploy contract & capture baseline TX hash
+        id: capture
+        shell: bash
+        env:
+          PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+        run: |
+          PROFILE_SCRIPT="${{ vars.PROFILE_SCRIPT || 'script/ProfileScript.s.sol' }}"
+
+          if [ -f "$PROFILE_SCRIPT" ]; then
+            # Forge deployment path: run script, capture TX hash from stdout
+            TX_HASH=$(forge script "$PROFILE_SCRIPT" \
+              --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} \
+              --private-key $PRIVATE_KEY \
+              --broadcast \
+              --json 2>/dev/null \
+              | jq -r '.receipts[-1].transactionHash' 2>/dev/null)
+          else
+            # Fallback: Use a simple cast send to a known deployed contract
+            echo "⚠️  No PROFILE_SCRIPT found. Sending dummy ETH transfer for baseline."
+            TX_HASH=$(cast send \
+              --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} \
+              --private-key $PRIVATE_KEY \
+              --json \
+              0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+              --value 0.001ether \
+              | jq -r '.transactionHash')
+          fi
+
+          echo "📌 Baseline TX: $TX_HASH"
+          echo "tx_hash=${TX_HASH}" >> $GITHUB_OUTPUT
+
+      - name: Stop Anvil
+        if: always()
+        run: kill ${{ env.ANVIL_PID }} 2>/dev/null || true
+
+  # ── Job 2: Capture TARGET gas from the PR branch ────────────────────────────
+  target:
+    name: 🎯 Target (PR branch)
+    runs-on: ubuntu-latest
+    outputs:
+      tx_hash: ${{ steps.capture.outputs.tx_hash }}
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: atupa-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start Anvil
+        shell: bash
+        run: |
+          anvil \
+            --port ${{ env.ANVIL_PORT }} \
+            --mnemonic "${{ env.ANVIL_MNEMONIC }}" \
+            --steps-tracing \
+            --silent &
+          echo "ANVIL_PID=$!" >> $GITHUB_ENV
+          for i in $(seq 1 20); do
+            cast block-number --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} &>/dev/null && break
+            sleep 0.5
+          done
+          echo "✅ Anvil is ready"
+
+      - name: Deploy contract & capture target TX hash
+        id: capture
+        shell: bash
+        env:
+          PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+        run: |
+          PROFILE_SCRIPT="${{ vars.PROFILE_SCRIPT || 'script/ProfileScript.s.sol' }}"
+
+          if [ -f "$PROFILE_SCRIPT" ]; then
+            TX_HASH=$(forge script "$PROFILE_SCRIPT" \
+              --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} \
+              --private-key $PRIVATE_KEY \
+              --broadcast \
+              --json 2>/dev/null \
+              | jq -r '.receipts[-1].transactionHash' 2>/dev/null)
+          else
+            echo "⚠️  No PROFILE_SCRIPT found. Sending dummy ETH transfer for target."
+            TX_HASH=$(cast send \
+              --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} \
+              --private-key $PRIVATE_KEY \
+              --json \
+              0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+              --value 0.001ether \
+              | jq -r '.transactionHash')
+          fi
+
+          echo "📌 Target TX: $TX_HASH"
+          echo "tx_hash=${TX_HASH}" >> $GITHUB_OUTPUT
+
+      - name: Stop Anvil
+        if: always()
+        run: kill ${{ env.ANVIL_PID }} 2>/dev/null || true
+
+  # ── Job 3: Diff & Report ─────────────────────────────────────────────────────
+  diff:
+    name: 🏮 Atupa Gas Diff
+    runs-on: ubuntu-latest
+    # Support manual override of hashes via workflow_dispatch
+    needs: [ baseline, target ]
+    permissions:
+      pull-requests: write   # Required for posting PR comments
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: atupa-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+
+      - name: Install Foundry (for Anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start Anvil (for diff RPC access)
+        shell: bash
+        run: |
+          anvil \
+            --port ${{ env.ANVIL_PORT }} \
+            --mnemonic "${{ env.ANVIL_MNEMONIC }}" \
+            --steps-tracing \
+            --silent &
+          echo "ANVIL_PID=$!" >> $GITHUB_ENV
+          for i in $(seq 1 20); do
+            cast block-number --rpc-url http://127.0.0.1:${{ env.ANVIL_PORT }} &>/dev/null && break
+            sleep 0.5
+          done
+
+      # Resolve TX hashes: manual override > job outputs
+      - name: Resolve TX hashes
+        id: hashes
+        shell: bash
+        run: |
+          BASE="${{ github.event.inputs.base_tx || needs.baseline.outputs.tx_hash }}"
+          TARGET="${{ github.event.inputs.target_tx || needs.target.outputs.tx_hash }}"
+          echo "base=${BASE}"     >> $GITHUB_OUTPUT
+          echo "target=${TARGET}" >> $GITHUB_OUTPUT
+          echo "📌 Comparing:"
+          echo "  Base:   $BASE"
+          echo "  Target: $TARGET"
+
+      # Use the Atupa composite action (the action.yml we just created)
+      - name: Run Atupa Gas Diff
+        uses: ./
+        with:
+          base_tx:     ${{ steps.hashes.outputs.base }}
+          target_tx:   ${{ steps.hashes.outputs.target }}
+          rpc_url:     'http://127.0.0.1:${{ env.ANVIL_PORT }}'
+          config:      'atupa.toml'
+          post_comment: 'true'
+          upload_svg:   'true'
+
+      - name: Stop Anvil
+        if: always()
+        run: kill ${{ env.ANVIL_PID }} 2>/dev/null || true

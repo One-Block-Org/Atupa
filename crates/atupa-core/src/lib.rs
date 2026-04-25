@@ -26,8 +26,68 @@ pub enum GasCategory {
     Other,
 }
 
+impl GasCategory {
+    pub fn from_step(op: &str, vm: VmKind) -> Self {
+        let op = op.trim();
+        match vm {
+            VmKind::Evm => Self::from_evm(op),
+            VmKind::Stylus => Self::from_stylus(op),
+        }
+    }
+
+    fn from_evm(op: &str) -> Self {
+        match op {
+            "SSTORE" | "TSTORE" => Self::StorageWrite,
+            "SLOAD" | "TLOAD" => Self::StorageRead,
+            "MLOAD" | "MSTORE" | "MSTORE8" | "MCOPY" | "MSIZE" => Self::Memory,
+            "KECCAK256" | "SHA3" => Self::Crypto,
+            "CALL" | "STATICCALL" | "DELEGATECALL" | "CALLCODE" | "CREATE" | "CREATE2"
+            | "RETURN" | "REVERT" | "STOP" | "INVALID" | "SELFDESTRUCT" => Self::Call,
+            // Arithmetic, Logic, Stack, Flow
+            "ADD" | "SUB" | "MUL" | "DIV" | "SDIV" | "MOD" | "SMOD" | "ADDMOD" | "MULMOD"
+            | "EXP" | "SIGNEXTEND" | "LT" | "GT" | "SLT" | "SGT" | "EQ" | "ISZERO" | "AND"
+            | "OR" | "XOR" | "NOT" | "BYTE" | "SHL" | "SHR" | "SAR" | "POP" | "PUSH1" | "PUSH2"
+            | "PUSH3" | "PUSH4" | "PUSH5" | "PUSH6" | "PUSH7" | "PUSH8" | "PUSH9" | "PUSH10"
+            | "PUSH11" | "PUSH12" | "PUSH13" | "PUSH14" | "PUSH15" | "PUSH16" | "PUSH17"
+            | "PUSH18" | "PUSH19" | "PUSH20" | "PUSH21" | "PUSH22" | "PUSH23" | "PUSH24"
+            | "PUSH25" | "PUSH26" | "PUSH27" | "PUSH28" | "PUSH29" | "PUSH30" | "PUSH31"
+            | "PUSH32" | "DUP1" | "DUP2" | "DUP3" | "DUP4" | "DUP5" | "DUP6" | "DUP7" | "DUP8"
+            | "DUP9" | "DUP10" | "DUP11" | "DUP12" | "DUP13" | "DUP14" | "DUP15" | "DUP16"
+            | "SWAP1" | "SWAP2" | "SWAP3" | "SWAP4" | "SWAP5" | "SWAP6" | "SWAP7" | "SWAP8"
+            | "SWAP9" | "SWAP10" | "SWAP11" | "SWAP12" | "SWAP13" | "SWAP14" | "SWAP15"
+            | "SWAP16" | "JUMP" | "JUMPI" | "PC" | "GAS" | "JUMPDEST" => Self::Execution,
+            _ => Self::Other,
+        }
+    }
+
+    fn from_stylus(hostio: &str) -> Self {
+        let n = hostio.to_lowercase();
+        // Specific checks for flush (it's a write operation)
+        if n.contains("flush") || n.contains("storage_store") {
+            Self::StorageWrite
+        } else if n.contains("storage_load") || n.contains("storage_cache") {
+            Self::StorageRead
+        } else if n.contains("keccak") || n.contains("sha2") {
+            Self::Crypto
+        } else if n.contains("call") || n.contains("create") {
+            Self::Call
+        } else if n.contains("memory") || n.contains("args") || n.contains("return") {
+            Self::Memory
+        } else if n.contains("msg")
+            || n.contains("block")
+            || n.contains("tx")
+            || n.contains("evm")
+            || n.contains("user")
+        {
+            Self::Execution
+        } else {
+            Self::Other
+        }
+    }
+}
+
 /// A single step in the EVM execution trace (equivalent to structLog).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TraceStep {
     pub pc: u64,
     pub op: String,
@@ -40,6 +100,16 @@ pub struct TraceStep {
     pub error: Option<String>,
     #[serde(default)]
     pub reverted: bool,
+    #[serde(default)]
+    pub vm_kind: VmKind,
+}
+
+/// Which virtual machine produced these execution steps.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum VmKind {
+    #[default]
+    Evm,
+    Stylus,
 }
 
 /// A single collapsed stack entry for aggregation.
@@ -48,6 +118,12 @@ pub struct CollapsedStack {
     pub stack: String,
     pub weight: u64,
     pub last_pc: Option<u64>,
+    /// Maximum call depth seen for steps in this stack.
+    #[serde(default)]
+    pub depth: u16,
+    /// The VM that produced this collapsed stack.
+    #[serde(default)]
+    pub vm_kind: VmKind,
     #[serde(default)]
     pub target_address: Option<String>,
     #[serde(default)]
@@ -85,6 +161,46 @@ impl Profile {
             categories: HashMap::new(),
             hot_paths: Vec::new(),
             generated_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+}
+
+// ─── Protocol Diff Structures ────────────────────────────────────────────────
+
+/// A field-by-field delta between two protocol executions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolDiffReport {
+    pub protocol: String,
+    pub rows: Vec<DiffRow>,
+}
+
+/// A single comparable metric row for protocol-level diffing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffRow {
+    pub metric: String,
+    pub base: f64,
+    pub target: f64,
+    pub delta: f64,
+    pub pct: f64,
+    /// true = a larger value is bad (gas, reads, calls), false = larger is better
+    pub higher_is_worse: bool,
+}
+
+impl DiffRow {
+    pub fn new(metric: &str, base: f64, target: f64, higher_is_worse: bool) -> Self {
+        let delta = target - base;
+        let pct = if base > 0.0 {
+            delta / base * 100.0
+        } else {
+            0.0
+        };
+        Self {
+            metric: metric.to_string(),
+            base,
+            target,
+            delta,
+            pct,
+            higher_is_worse,
         }
     }
 }

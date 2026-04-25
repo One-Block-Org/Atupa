@@ -1,6 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import './styles/design-system.css';
-import type { StitchedReport } from './types/trace';
 import {
   aggregateHostIOs,
   fmtGas,
@@ -8,29 +7,57 @@ import {
   shortHash,
   evmSteps,
   stylusSteps,
+  isDiff,
 } from './types/trace';
+import type { StudioReport } from './types/trace';
+import { reportToTree } from './types/reportToTree';
 import { DragDropZone } from './components/DragDropZone';
 import { MetricCard } from './components/MetricCard';
 import { HostIoAggregator } from './components/HostIoAggregator';
 import { TraceInspector } from './components/TraceInspector';
+import { FlameGraph } from './components/FlameGraph';
+import { CategoryBreakdown } from './components/CategoryBreakdown';
+import { DiffOverview } from './components/DiffOverview';
 
-type View = 'overview' | 'trace' | 'hostio';
+type View = 'overview' | 'flame' | 'trace' | 'hostio';
 
 export default function App() {
-  const [report, setReport] = useState<StitchedReport | null>(null);
+  const [report, setReport] = useState<StudioReport | null>(null);
   const [view, setView] = useState<View>('overview');
+  const [flameSearch, setFlameSearch] = useState('');
 
-  const handleLoad = useCallback((r: StitchedReport) => {
+  const handleLoad = useCallback((r: StudioReport) => {
     setReport(r);
     setView('overview');
   }, []);
 
+  // ── Auto-load from URL ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auto') === 'true') {
+      fetch('/auto-load.json')
+        .then(res => {
+          if (!res.ok) throw new Error('Report not found');
+          return res.json();
+        })
+        .then(handleLoad)
+        .catch(err => {
+          console.warn('Auto-load failed or no report found:', err);
+        });
+    }
+  }, [handleLoad]);
+
   const handleReset = useCallback(() => {
     setReport(null);
     setView('overview');
+    setFlameSearch('');
   }, []);
 
-  const hostIOs = report ? aggregateHostIOs(report) : [];
+  const hostIOs = report ? aggregateHostIOs(isDiff(report) ? report.target : report) : [];
+  const flameRoot = useMemo(
+    () => (report ? reportToTree(isDiff(report) ? report.target : report) : null),
+    [report],
+  );
 
   return (
     <div className="app-shell">
@@ -46,10 +73,10 @@ export default function App() {
           <>
             <span className="live-badge">
               <span className="live-dot" />
-              Loaded
+              {isDiff(report) ? 'Comparison Loaded' : 'Single Trace Loaded'}
             </span>
-            <span className="topbar-tx" title={report.tx_hash}>
-              {report.tx_hash}
+            <span className="topbar-tx" title={isDiff(report) ? `${report.base.tx_hash} vs ${report.target.tx_hash}` : report.tx_hash}>
+              {isDiff(report) ? 'Execution Comparison' : report.tx_hash}
             </span>
             <button
               id="btn-reset"
@@ -76,9 +103,10 @@ export default function App() {
       <nav className="app-sidebar" aria-label="Main navigation">
         <div className="sidebar-section-label">Views</div>
 
-        {(['overview', 'trace', 'hostio'] as View[]).map((v) => {
+        {(['overview', 'flame', 'trace', 'hostio'] as View[]).map((v) => {
           const meta = {
             overview: { icon: '📊', label: 'Overview' },
+            flame:    { icon: '🔆', label: 'Visual Trace' },
             trace:    { icon: '🧩', label: 'Trace Inspector' },
             hostio:   { icon: '🔥', label: 'HostIO Hot Paths' },
           }[v];
@@ -97,12 +125,21 @@ export default function App() {
           );
         })}
 
-        {report && (
+        {report && !isDiff(report) && (
           <div className="sidebar-meta">
             <div>tx: {shortHash(report.tx_hash)}</div>
             <div>steps: {report.steps.length.toLocaleString()}</div>
             <div>evm: {evmSteps(report).length.toLocaleString()}</div>
             <div>wasm: {stylusSteps(report).length.toLocaleString()}</div>
+          </div>
+        )}
+
+        {report && isDiff(report) && (
+          <div className="sidebar-meta">
+            <div style={{ color: 'var(--color-text-primary)', fontWeight: 'bold' }}>⚖️ DELTA</div>
+            <div style={{ color: report.metrics.gas_delta > 0 ? '#ff4d4d' : '#4dff88' }}>
+              Gas: {report.metrics.gas_delta > 0 ? '+' : ''}{fmtGas(report.metrics.gas_delta)}
+            </div>
           </div>
         )}
       </nav>
@@ -115,6 +152,21 @@ export default function App() {
           <>
             {view === 'overview' && (
               <>
+                {isDiff(report) ? (
+                  <DiffOverview report={report} />
+                ) : (
+                  <>
+                    {/* Section: Cost Breakdown */}
+                    <div className="glass-card">
+                      <div className="section-header">
+                        <span className="section-title">Cost Breakdown by Category</span>
+                        <div className="section-divider" />
+                      </div>
+                      <CategoryBreakdown report={report} />
+                    </div>
+                  </>
+                )}
+
                 {/* Section: Metrics */}
                 <div className="glass-card">
                   <div className="section-header">
@@ -126,35 +178,35 @@ export default function App() {
                       kind="evm"
                       icon="⛽"
                       label="EVM Trace Gas"
-                      value={fmtGas(report.total_evm_gas)}
+                      value={fmtGas(isDiff(report) ? report.target.total_evm_gas : report.total_evm_gas)}
                       sub="gas units"
                     />
                     <MetricCard
                       kind="stylus"
                       icon="🦾"
                       label="Stylus Ink"
-                      value={fmtGas(report.total_stylus_ink)}
-                      sub={`≈ ${fmtEquiv(report.total_stylus_gas_equiv)} gas-equiv`}
+                      value={fmtGas(isDiff(report) ? report.target.total_stylus_ink : report.total_stylus_ink)}
+                      sub={`≈ ${fmtEquiv(isDiff(report) ? report.target.total_stylus_gas_equiv : report.total_stylus_gas_equiv)} gas-equiv`}
                     />
                     <MetricCard
                       kind="steps"
                       icon="🧩"
                       label="EVM Steps"
-                      value={fmtGas(evmSteps(report).length)}
+                      value={fmtGas(evmSteps(isDiff(report) ? report.target : report).length)}
                       sub="struct log entries"
                     />
                     <MetricCard
                       kind="stylus"
                       icon="📡"
                       label="Stylus HostIOs"
-                      value={fmtGas(stylusSteps(report).length)}
+                      value={fmtGas(stylusSteps(isDiff(report) ? report.target : report).length)}
                       sub="WASM host calls"
                     />
                     <MetricCard
                       kind="boundary"
                       icon="⇌"
                       label="VM Boundaries"
-                      value={fmtGas(report.vm_boundary_count)}
+                      value={fmtGas(isDiff(report) ? report.target.vm_boundary_count : report.vm_boundary_count)}
                       sub="EVM → WASM crossings"
                     />
                   </div>
@@ -171,6 +223,34 @@ export default function App() {
                   </div>
                 )}
               </>
+            )}
+
+            {view === 'flame' && flameRoot && (
+              <div className="glass-card">
+                <div className="section-header">
+                  <span className="section-title">🔆 Visual Trace</span>
+                  <div className="section-divider" />
+                  <input
+                    id="flame-search"
+                    type="search"
+                    placeholder="Search node…"
+                    value={flameSearch}
+                    onChange={(e) => setFlameSearch(e.target.value)}
+                    style={{
+                      padding: '4px 10px',
+                      background: 'var(--color-bg-raised)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 6,
+                      color: 'var(--color-text-primary)',
+                      fontSize: 11,
+                      fontFamily: 'var(--font-mono)',
+                      outline: 'none',
+                      width: 180,
+                    }}
+                  />
+                </div>
+                <FlameGraph root={flameRoot} search={flameSearch} />
+              </div>
             )}
 
             {view === 'hostio' && (
@@ -192,10 +272,10 @@ export default function App() {
                   <span className="section-title">🧩 Unified Execution Trace</span>
                   <div className="section-divider" />
                   <span style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                    {report.steps.length.toLocaleString()} total steps
+                    {(isDiff(report) ? report.target.steps : report.steps).length.toLocaleString()} total steps
                   </span>
                 </div>
-                <TraceInspector report={report} />
+                <TraceInspector report={isDiff(report) ? report.target : report} />
               </div>
             )}
           </>
