@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 #[derive(RustEmbed)]
-#[folder = "../../studio/dist/"]
+#[folder = "dist/"]
 struct Asset;
 
 pub struct StudioServer {

@@ -62,6 +62,18 @@ publish_crate "atupa-nitro" 20
 publish_crate "atupa-sdk" 30
 
 # 6. Final Binary (Depends on everything)
+echo "📦 Preparing studio assets for atupa binary..."
+if [ -d "studio/dist" ]; then
+    rm -rf bin/atupa/dist
+    cp -r studio/dist bin/atupa/dist
+else
+    echo "❌ Error: studio/dist not found. Run npm build first."
+    exit 1
+fi
+
 publish_crate "atupa"
+
+# Cleanup
+rm -rf bin/atupa/dist
 
 echo "✅ All crates processed successfully!"
