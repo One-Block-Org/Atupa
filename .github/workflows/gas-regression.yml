@@ -137,6 +137,7 @@ jobs:
         with:
           key: atupa-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
@@ -208,6 +209,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: atupa-ci-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
 
       - name: Install Foundry (for Anvil)
         uses: foundry-rs/foundry-toolchain@v1

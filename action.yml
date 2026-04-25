@@ -73,6 +73,10 @@ runs:
       run: |
         if [ -f "${{ github.workspace }}/bin/atupa/Cargo.toml" ]; then
           echo "🏠 Running inside Atupa repo — building from source…"
+          if [ -d "${{ github.workspace }}/studio" ]; then
+            echo "🎨 Building Atupa Studio frontend…"
+            cd studio && npm install && npm run build && cd ..
+          fi
           cargo build --release -p atupa
           echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
         elif command -v atupa &>/dev/null; then
